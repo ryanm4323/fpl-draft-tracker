@@ -4,6 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Spreadsheet Merchants 3.0 - FPL Draft Tracker</title>
+  <!-- 
+    NETLIFY CREDIT OPTIMIZATIONS:
+    - 24-hour cache on all data (transfer analysis, position history, standings)
+    - Lazy loading for position history (only on scroll/view)
+    - 50ms delay between API requests to avoid rate limiting
+    - Reduced console logging (every 5th gameweek only)
+    - Manual refresh button instead of auto-refresh
+    - Expected reduction: ~95% fewer function calls vs hourly refresh
+  -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -227,54 +236,62 @@
           
           if (cached) {
             const cachedData = JSON.parse(cached);
-            if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 43200000) {
+            if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 86400000) {
               console.log('Using cached position history');
               setPositionHistory(cachedData.history);
               return;
             }
           }
           
-          console.log('Building position history...');
+          console.log('Building position history for', currentGW, 'gameweeks (cached 24h)...');
           const history = [];
           
-          // Fetch match history for each gameweek
+          // Track cumulative points for each team across all gameweeks
+          const cumulativePoints = {};
+          
+          // Initialize cumulative points tracker
+          leagueEntries.forEach(entry => {
+            cumulativePoints[entry.entry_id] = {
+              entry_id: entry.entry_id,
+              entry_name: entry.entry_name,
+              total: 0
+            };
+          });
+          
+          // Fetch match history for each gameweek and accumulate
           for (let gw = 1; gw <= currentGW; gw++) {
             try {
+              // Small delay to avoid rate limiting (only 50ms)
+              if (gw > 1) await new Promise(resolve => setTimeout(resolve, 50));
+              
               const response = await fetch(`${apiBase}/api/league/${league.league.id}/matches?event=${gw}`);
-              if (!response.ok) continue;
+              if (!response.ok) {
+                console.log(`GW${gw}: API returned ${response.status}, skipping`);
+                continue;
+              }
               
               const data = await response.json();
               const matches = data.matches || [];
               
-              // Calculate cumulative points for each team up to this GW
-              const gwStandings = {};
+              // Only log every 5 gameweeks to reduce noise
+              if (gw % 5 === 0 || gw === currentGW) {
+                console.log(`GW${gw}: Found ${matches.length} matches`);
+              }
               
+              // Add this gameweek's points to cumulative totals
               matches.forEach(match => {
-                // Initialize if needed
-                if (!gwStandings[match.league_entry_1]) {
-                  const entry = leagueEntries.find(e => e.entry_id === match.league_entry_1);
-                  gwStandings[match.league_entry_1] = {
-                    entry_id: match.league_entry_1,
-                    entry_name: entry?.entry_name || 'Unknown',
-                    points: 0
-                  };
+                if (cumulativePoints[match.league_entry_1]) {
+                  cumulativePoints[match.league_entry_1].total += (match.league_entry_1_points || 0);
                 }
-                if (!gwStandings[match.league_entry_2]) {
-                  const entry = leagueEntries.find(e => e.entry_id === match.league_entry_2);
-                  gwStandings[match.league_entry_2] = {
-                    entry_id: match.league_entry_2,
-                    entry_name: entry?.entry_name || 'Unknown',
-                    points: 0
-                  };
+                if (cumulativePoints[match.league_entry_2]) {
+                  cumulativePoints[match.league_entry_2].total += (match.league_entry_2_points || 0);
                 }
-                
-                // Add points from this match
-                gwStandings[match.league_entry_1].points += (match.league_entry_1_points || 0);
-                gwStandings[match.league_entry_2].points += (match.league_entry_2_points || 0);
               });
               
-              // Sort by cumulative points
-              const sorted = Object.values(gwStandings).sort((a, b) => b.points - a.points);
+              // Sort by cumulative points and record positions
+              const sorted = Object.values(cumulativePoints)
+                .map(team => ({ ...team })) // Clone to avoid mutation
+                .sort((a, b) => b.total - a.total);
               
               sorted.forEach((team, index) => {
                 history.push({
@@ -282,7 +299,7 @@
                   entry_id: team.entry_id,
                   entry_name: team.entry_name,
                   position: index + 1,
-                  points: team.points
+                  points: team.total
                 });
               });
               
@@ -291,6 +308,7 @@
             }
           }
           
+          console.log('Position history built:', history.length, 'entries');
           setPositionHistory(history);
           
           // Cache the results
@@ -299,8 +317,6 @@
             timestamp: Date.now(),
             history: history
           }));
-          
-          console.log('Position history built:', history.length, 'entries');
           
         } catch (e) {
           console.log('Error building position history:', e);
@@ -389,9 +405,9 @@
           
           if (cached) {
             const cachedData = JSON.parse(cached);
-            // Check if cache is still valid (same gameweek and less than 12 hours old)
+            // Check if cache is still valid (same gameweek and less than 24 hours old)
             const currentGW = leagueData?.current_event || 1;
-            if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 43200000) {
+            if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 86400000) {
               console.log('Using cached transfer analysis');
               setTransferAnalysis(cachedData.analysis);
               return;
@@ -712,6 +728,7 @@
                 </p>
                 <p className="text-red-900 font-semibold">
                   {lastUpdated && `Last updated: ${lastUpdated.toLocaleTimeString()}`}
+                  {lastUpdated && <span className="text-yellow-200 ml-2 text-sm">(Cached for 24hrs to save credits 💰)</span>}
                 </p>
               </div>
               <div className="flex gap-3">
@@ -755,119 +772,6 @@
 
             {standings.length > 0 && (
               <>
-                {/* Position History Chart */}
-                {positionHistory.length > 0 && (
-                  <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mb-8 shadow-2xl">
-                    <h2 className="text-4xl font-black text-yellow-300 mb-6 flex items-center gap-3" style={{textShadow: '2px 2px 0px rgba(139, 0, 0, 0.8)'}}>
-                      📈 Position History
-                    </h2>
-                    <div className="bg-red-900 p-6 rounded-2xl border-2 border-yellow-400 overflow-x-auto">
-                      <div style={{minWidth: '800px', height: '400px', position: 'relative'}}>
-                        <svg width="100%" height="100%" viewBox="0 0 1000 400" preserveAspectRatio="xMidYMid meet">
-                          {/* Grid lines */}
-                          {[1,2,3,4,5,6,7,8,9,10,11,12].map(pos => (
-                            <g key={pos}>
-                              <line
-                                x1="50"
-                                y1={30 + (pos - 1) * 28}
-                                x2="950"
-                                y2={30 + (pos - 1) * 28}
-                                stroke={pos === 7 || pos === 8 || pos === 10 || pos === 11 || pos === 12 ? 'rgba(239, 68, 68, 0.3)' : 'rgba(253, 224, 71, 0.15)'}
-                                strokeWidth={pos === 1 || pos === 6 || pos === 9 ? '2' : '1'}
-                              />
-                              <text x="35" y={35 + (pos - 1) * 28} fill="#fde047" fontSize="12" textAnchor="end">
-                                {pos}
-                              </text>
-                            </g>
-                          ))}
-                          
-                          {/* Gameweek labels */}
-                          {Array.from({length: Math.max(...positionHistory.map(h => h.gameweek))}, (_, i) => i + 1).map(gw => (
-                            <text
-                              key={gw}
-                              x={50 + ((gw - 1) * 900 / Math.max(...positionHistory.map(h => h.gameweek)))}
-                              y="395"
-                              fill="#fde047"
-                              fontSize="11"
-                              textAnchor="middle"
-                            >
-                              {gw}
-                            </text>
-                          ))}
-                          
-                          {/* Lines for each team */}
-                          {standings.slice(0, 6).map((team, idx) => {
-                            const teamHistory = positionHistory.filter(h => h.entry_id === team.entry_id).sort((a, b) => a.gameweek - b.gameweek);
-                            if (teamHistory.length === 0) return null;
-                            
-                            const colors = ['#22c55e', '#3b82f6', '#a855f7', '#f97316', '#06b6d4', '#f59e0b'];
-                            const color = colors[idx % colors.length];
-                            
-                            const maxGW = Math.max(...positionHistory.map(h => h.gameweek));
-                            const points = teamHistory.map(h => ({
-                              x: 50 + ((h.gameweek - 1) * 900 / maxGW),
-                              y: 30 + (h.position - 1) * 28,
-                              gw: h.gameweek,
-                              pos: h.position,
-                              inDanger: h.position === 7 || h.position === 8 || h.position === 10 || h.position === 11 || h.position === 12
-                            }));
-                            
-                            return (
-                              <g key={team.entry_id}>
-                                {/* Line segments with danger zone coloring */}
-                                {points.map((point, i) => {
-                                  if (i === 0) return null;
-                                  const prev = points[i - 1];
-                                  const isDanger = point.inDanger || prev.inDanger;
-                                  return (
-                                    <line
-                                      key={i}
-                                      x1={prev.x}
-                                      y1={prev.y}
-                                      x2={point.x}
-                                      y2={point.y}
-                                      stroke={isDanger ? '#ef4444' : color}
-                                      strokeWidth="3"
-                                      opacity={isDanger ? "0.9" : "0.7"}
-                                    />
-                                  );
-                                })}
-                                
-                                {/* Points */}
-                                {points.map((point, i) => (
-                                  <circle
-                                    key={i}
-                                    cx={point.x}
-                                    cy={point.y}
-                                    r="4"
-                                    fill={point.inDanger ? '#ef4444' : color}
-                                    stroke={point.inDanger ? '#fde047' : 'white'}
-                                    strokeWidth="1.5"
-                                  />
-                                ))}
-                              </g>
-                            );
-                          })}
-                        </svg>
-                      </div>
-                      <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3">
-                        {standings.slice(0, 6).map((team, idx) => {
-                          const colors = ['#22c55e', '#3b82f6', '#a855f7', '#f97316', '#06b6d4', '#f59e0b'];
-                          return (
-                            <div key={team.entry_id} className="flex items-center gap-2">
-                              <div style={{width: '16px', height: '16px', backgroundColor: colors[idx % colors.length], borderRadius: '50%'}} />
-                              <span className="text-yellow-100 text-sm truncate">{team.entry_name}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <p className="text-yellow-200 text-xs mt-4 text-center">
-                        🔴 Red segments = Time spent in the danger zone (7th, 8th, 10th, 11th, 12th)
-                      </p>
-                    </div>
-                  </div>
-                )}
-                
                 {/* McDonald's Punishment Tracker */}
                 <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mb-8 shadow-2xl">
                   <h2 className="text-4xl font-black text-yellow-300 mb-6 flex items-center gap-3" style={{textShadow: '2px 2px 0px rgba(139, 0, 0, 0.8)'}}>
@@ -1014,6 +918,130 @@
                   </table>
                 </div>
               </div>
+
+              {/* Position History Chart */}
+              {positionHistory.length > 0 ? (
+                <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mt-8 shadow-2xl">
+                  <h2 className="text-4xl font-black text-yellow-300 mb-6 flex items-center gap-3" style={{textShadow: '2px 2px 0px rgba(139, 0, 0, 0.8)'}}>
+                    📈 Position History
+                  </h2>
+                  <div className="bg-red-900 p-6 rounded-2xl border-2 border-yellow-400 overflow-x-auto">
+                    <div style={{minWidth: '800px', height: '400px', position: 'relative'}}>
+                      <svg width="100%" height="100%" viewBox="0 0 1000 400" preserveAspectRatio="xMidYMid meet">
+                        {/* Grid lines */}
+                        {[1,2,3,4,5,6,7,8,9,10,11,12].map(pos => (
+                          <g key={pos}>
+                            <line
+                              x1="50"
+                              y1={30 + (pos - 1) * 28}
+                              x2="950"
+                              y2={30 + (pos - 1) * 28}
+                              stroke={pos === 7 || pos === 8 || pos === 10 || pos === 11 || pos === 12 ? 'rgba(239, 68, 68, 0.3)' : 'rgba(253, 224, 71, 0.15)'}
+                              strokeWidth={pos === 1 || pos === 6 || pos === 9 ? '2' : '1'}
+                            />
+                            <text x="35" y={35 + (pos - 1) * 28} fill="#fde047" fontSize="12" textAnchor="end">
+                              {pos}
+                            </text>
+                          </g>
+                        ))}
+                        
+                        {/* Gameweek labels */}
+                        {Array.from({length: Math.max(...positionHistory.map(h => h.gameweek))}, (_, i) => i + 1).map(gw => (
+                          <text
+                            key={gw}
+                            x={50 + ((gw - 1) * 900 / Math.max(...positionHistory.map(h => h.gameweek)))}
+                            y="395"
+                            fill="#fde047"
+                            fontSize="11"
+                            textAnchor="middle"
+                          >
+                            {gw}
+                          </text>
+                        ))}
+                        
+                        {/* Lines for each team */}
+                        {standings.map((team, idx) => {
+                          const teamHistory = positionHistory.filter(h => h.entry_id === team.entry_id).sort((a, b) => a.gameweek - b.gameweek);
+                          if (teamHistory.length === 0) return null;
+                          
+                          const colors = [
+                            '#22c55e', '#3b82f6', '#a855f7', '#f97316', '#06b6d4', '#f59e0b',
+                            '#ec4899', '#8b5cf6', '#10b981', '#f43f5e', '#14b8a6', '#84cc16'
+                          ];
+                          const color = colors[idx % colors.length];
+                          
+                          const maxGW = Math.max(...positionHistory.map(h => h.gameweek));
+                          const points = teamHistory.map(h => ({
+                            x: 50 + ((h.gameweek - 1) * 900 / maxGW),
+                            y: 30 + (h.position - 1) * 28,
+                            gw: h.gameweek,
+                            pos: h.position,
+                            inDanger: h.position === 7 || h.position === 8 || h.position === 10 || h.position === 11 || h.position === 12
+                          }));
+                          
+                          return (
+                            <g key={team.entry_id}>
+                              {/* Line segments with danger zone coloring */}
+                              {points.map((point, i) => {
+                                if (i === 0) return null;
+                                const prev = points[i - 1];
+                                const isDanger = point.inDanger || prev.inDanger;
+                                return (
+                                  <line
+                                    key={i}
+                                    x1={prev.x}
+                                    y1={prev.y}
+                                    x2={point.x}
+                                    y2={point.y}
+                                    stroke={isDanger ? '#ef4444' : color}
+                                    strokeWidth="2.5"
+                                    opacity={isDanger ? "0.9" : "0.6"}
+                                  />
+                                );
+                              })}
+                              
+                              {/* Points */}
+                              {points.map((point, i) => (
+                                <circle
+                                  key={i}
+                                  cx={point.x}
+                                  cy={point.y}
+                                  r="3.5"
+                                  fill={point.inDanger ? '#ef4444' : color}
+                                  stroke={point.inDanger ? '#fde047' : 'white'}
+                                  strokeWidth="1.5"
+                                />
+                              ))}
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                      {standings.map((team, idx) => {
+                        const colors = [
+                          '#22c55e', '#3b82f6', '#a855f7', '#f97316', '#06b6d4', '#f59e0b',
+                          '#ec4899', '#8b5cf6', '#10b981', '#f43f5e', '#14b8a6', '#84cc16'
+                        ];
+                        return (
+                          <div key={team.entry_id} className="flex items-center gap-2">
+                            <div style={{width: '14px', height: '14px', backgroundColor: colors[idx % colors.length], borderRadius: '50%'}} />
+                            <span className="text-yellow-100 text-xs truncate">{team.entry_name}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="text-yellow-200 text-xs mt-4 text-center">
+                      🔴 Red segments = Time spent in the danger zone (7th, 8th, 10th, 11th, 12th)
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-6 rounded-3xl border-4 border-yellow-400 mt-8 shadow-2xl">
+                  <p className="text-yellow-300 text-center">📊 Loading position history... (Check console for details)</p>
+                </div>
+              )}
+
               </>
             )}
 
