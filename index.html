@@ -105,6 +105,7 @@
       const [transferAnalysis, setTransferAnalysis] = useState(null);
       const [analysisLoading, setAnalysisLoading] = useState(false);
       const [analysisProgress, setAnalysisProgress] = useState('');
+      const [positionHistory, setPositionHistory] = useState([]);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
       const [lastUpdated, setLastUpdated] = useState(null);
@@ -198,6 +199,9 @@
               entry_name: entry.entry_name || `${entry.player_first_name || ''} ${entry.player_last_name || ''}`.trim()
             }));
             setStandings(standingsWithPoints.sort((a, b) => (b.total || 0) - (a.total || 0)));
+            
+            // Build position history for all teams across all gameweeks
+            await buildPositionHistory(league.league_entries, apiBase, league);
           }
 
           // Fetch all team transactions for waiver analysis
@@ -213,6 +217,93 @@
           console.error('Error fetching data:', err);
         } finally {
           setLoading(false);
+        }
+      };
+
+      const buildPositionHistory = async (leagueEntries, apiBase, league) => {
+        try {
+          const currentGW = league?.current_event || 1;
+          const cached = localStorage.getItem('position-history-cache');
+          
+          if (cached) {
+            const cachedData = JSON.parse(cached);
+            if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 43200000) {
+              console.log('Using cached position history');
+              setPositionHistory(cachedData.history);
+              return;
+            }
+          }
+          
+          console.log('Building position history...');
+          const history = [];
+          
+          // Fetch match history for each gameweek
+          for (let gw = 1; gw <= currentGW; gw++) {
+            try {
+              const response = await fetch(`${apiBase}/api/league/${league.league.id}/matches?event=${gw}`);
+              if (!response.ok) continue;
+              
+              const data = await response.json();
+              const matches = data.matches || [];
+              
+              // Calculate cumulative points for each team up to this GW
+              const gwStandings = {};
+              
+              matches.forEach(match => {
+                // Initialize if needed
+                if (!gwStandings[match.league_entry_1]) {
+                  const entry = leagueEntries.find(e => e.entry_id === match.league_entry_1);
+                  gwStandings[match.league_entry_1] = {
+                    entry_id: match.league_entry_1,
+                    entry_name: entry?.entry_name || 'Unknown',
+                    points: 0
+                  };
+                }
+                if (!gwStandings[match.league_entry_2]) {
+                  const entry = leagueEntries.find(e => e.entry_id === match.league_entry_2);
+                  gwStandings[match.league_entry_2] = {
+                    entry_id: match.league_entry_2,
+                    entry_name: entry?.entry_name || 'Unknown',
+                    points: 0
+                  };
+                }
+                
+                // Add points from this match
+                gwStandings[match.league_entry_1].points += (match.league_entry_1_points || 0);
+                gwStandings[match.league_entry_2].points += (match.league_entry_2_points || 0);
+              });
+              
+              // Sort by cumulative points
+              const sorted = Object.values(gwStandings).sort((a, b) => b.points - a.points);
+              
+              sorted.forEach((team, index) => {
+                history.push({
+                  gameweek: gw,
+                  entry_id: team.entry_id,
+                  entry_name: team.entry_name,
+                  position: index + 1,
+                  points: team.points
+                });
+              });
+              
+            } catch (e) {
+              console.log(`Error fetching GW${gw} matches:`, e);
+            }
+          }
+          
+          setPositionHistory(history);
+          
+          // Cache the results
+          localStorage.setItem('position-history-cache', JSON.stringify({
+            gameweek: currentGW,
+            timestamp: Date.now(),
+            history: history
+          }));
+          
+          console.log('Position history built:', history.length, 'entries');
+          
+        } catch (e) {
+          console.log('Error building position history:', e);
         }
       };
 
@@ -298,9 +389,9 @@
           
           if (cached) {
             const cachedData = JSON.parse(cached);
-            // Check if cache is still valid (same gameweek and less than 1 hour old)
+            // Check if cache is still valid (same gameweek and less than 12 hours old)
             const currentGW = leagueData?.current_event || 1;
-            if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 3600000) {
+            if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 43200000) {
               console.log('Using cached transfer analysis');
               setTransferAnalysis(cachedData.analysis);
               return;
@@ -664,6 +755,119 @@
 
             {standings.length > 0 && (
               <>
+                {/* Position History Chart */}
+                {positionHistory.length > 0 && (
+                  <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mb-8 shadow-2xl">
+                    <h2 className="text-4xl font-black text-yellow-300 mb-6 flex items-center gap-3" style={{textShadow: '2px 2px 0px rgba(139, 0, 0, 0.8)'}}>
+                      📈 Position History
+                    </h2>
+                    <div className="bg-red-900 p-6 rounded-2xl border-2 border-yellow-400 overflow-x-auto">
+                      <div style={{minWidth: '800px', height: '400px', position: 'relative'}}>
+                        <svg width="100%" height="100%" viewBox="0 0 1000 400" preserveAspectRatio="xMidYMid meet">
+                          {/* Grid lines */}
+                          {[1,2,3,4,5,6,7,8,9,10,11,12].map(pos => (
+                            <g key={pos}>
+                              <line
+                                x1="50"
+                                y1={30 + (pos - 1) * 28}
+                                x2="950"
+                                y2={30 + (pos - 1) * 28}
+                                stroke={pos === 7 || pos === 8 || pos === 10 || pos === 11 || pos === 12 ? 'rgba(239, 68, 68, 0.3)' : 'rgba(253, 224, 71, 0.15)'}
+                                strokeWidth={pos === 1 || pos === 6 || pos === 9 ? '2' : '1'}
+                              />
+                              <text x="35" y={35 + (pos - 1) * 28} fill="#fde047" fontSize="12" textAnchor="end">
+                                {pos}
+                              </text>
+                            </g>
+                          ))}
+                          
+                          {/* Gameweek labels */}
+                          {Array.from({length: Math.max(...positionHistory.map(h => h.gameweek))}, (_, i) => i + 1).map(gw => (
+                            <text
+                              key={gw}
+                              x={50 + ((gw - 1) * 900 / Math.max(...positionHistory.map(h => h.gameweek)))}
+                              y="395"
+                              fill="#fde047"
+                              fontSize="11"
+                              textAnchor="middle"
+                            >
+                              {gw}
+                            </text>
+                          ))}
+                          
+                          {/* Lines for each team */}
+                          {standings.slice(0, 6).map((team, idx) => {
+                            const teamHistory = positionHistory.filter(h => h.entry_id === team.entry_id).sort((a, b) => a.gameweek - b.gameweek);
+                            if (teamHistory.length === 0) return null;
+                            
+                            const colors = ['#22c55e', '#3b82f6', '#a855f7', '#f97316', '#06b6d4', '#f59e0b'];
+                            const color = colors[idx % colors.length];
+                            
+                            const maxGW = Math.max(...positionHistory.map(h => h.gameweek));
+                            const points = teamHistory.map(h => ({
+                              x: 50 + ((h.gameweek - 1) * 900 / maxGW),
+                              y: 30 + (h.position - 1) * 28,
+                              gw: h.gameweek,
+                              pos: h.position,
+                              inDanger: h.position === 7 || h.position === 8 || h.position === 10 || h.position === 11 || h.position === 12
+                            }));
+                            
+                            return (
+                              <g key={team.entry_id}>
+                                {/* Line segments with danger zone coloring */}
+                                {points.map((point, i) => {
+                                  if (i === 0) return null;
+                                  const prev = points[i - 1];
+                                  const isDanger = point.inDanger || prev.inDanger;
+                                  return (
+                                    <line
+                                      key={i}
+                                      x1={prev.x}
+                                      y1={prev.y}
+                                      x2={point.x}
+                                      y2={point.y}
+                                      stroke={isDanger ? '#ef4444' : color}
+                                      strokeWidth="3"
+                                      opacity={isDanger ? "0.9" : "0.7"}
+                                    />
+                                  );
+                                })}
+                                
+                                {/* Points */}
+                                {points.map((point, i) => (
+                                  <circle
+                                    key={i}
+                                    cx={point.x}
+                                    cy={point.y}
+                                    r="4"
+                                    fill={point.inDanger ? '#ef4444' : color}
+                                    stroke={point.inDanger ? '#fde047' : 'white'}
+                                    strokeWidth="1.5"
+                                  />
+                                ))}
+                              </g>
+                            );
+                          })}
+                        </svg>
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3">
+                        {standings.slice(0, 6).map((team, idx) => {
+                          const colors = ['#22c55e', '#3b82f6', '#a855f7', '#f97316', '#06b6d4', '#f59e0b'];
+                          return (
+                            <div key={team.entry_id} className="flex items-center gap-2">
+                              <div style={{width: '16px', height: '16px', backgroundColor: colors[idx % colors.length], borderRadius: '50%'}} />
+                              <span className="text-yellow-100 text-sm truncate">{team.entry_name}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="text-yellow-200 text-xs mt-4 text-center">
+                        🔴 Red segments = Time spent in the danger zone (7th, 8th, 10th, 11th, 12th)
+                      </p>
+                    </div>
+                  </div>
+                )}
+                
                 {/* McDonald's Punishment Tracker */}
                 <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mb-8 shadow-2xl">
                   <h2 className="text-4xl font-black text-yellow-300 mb-6 flex items-center gap-3" style={{textShadow: '2px 2px 0px rgba(139, 0, 0, 0.8)'}}>
@@ -811,89 +1015,6 @@
                 </div>
               </div>
               </>
-            )}
-
-            <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mb-8 shadow-2xl">
-              <h3 className="text-yellow-300 mb-5 text-2xl font-black">🔄 Add Waiver Transaction</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <input
-                  type="text"
-                  placeholder="Manager Name"
-                  value={waiverForm.manager}
-                  onChange={(e) => setWaiverForm({ ...waiverForm, manager: e.target.value })}
-                  className="p-3 bg-red-900 border-2 border-yellow-400 rounded-lg text-yellow-100 placeholder-yellow-300"
-                />
-                <input
-                  type="text"
-                  placeholder="Gameweek (e.g., GW23)"
-                  value={waiverForm.gameweek}
-                  onChange={(e) => setWaiverForm({ ...waiverForm, gameweek: e.target.value })}
-                  className="p-3 bg-red-900 border-2 border-yellow-400 rounded-lg text-yellow-100 placeholder-yellow-300"
-                />
-                <input
-                  type="text"
-                  placeholder="Player OUT"
-                  value={waiverForm.playerOut}
-                  onChange={(e) => setWaiverForm({ ...waiverForm, playerOut: e.target.value })}
-                  className="p-3 bg-red-900 border-2 border-yellow-400 rounded-lg text-yellow-100 placeholder-yellow-300"
-                />
-                <input
-                  type="text"
-                  placeholder="Player IN"
-                  value={waiverForm.playerIn}
-                  onChange={(e) => setWaiverForm({ ...waiverForm, playerIn: e.target.value })}
-                  className="p-3 bg-red-900 border-2 border-yellow-400 rounded-lg text-yellow-100 placeholder-yellow-300"
-                />
-              </div>
-              <button
-                onClick={() => {
-                  if (waiverForm.manager && waiverForm.playerOut && waiverForm.playerIn && waiverForm.gameweek) {
-                    addWaiver(waiverForm.manager, waiverForm.playerOut, waiverForm.playerIn, waiverForm.gameweek);
-                    setWaiverForm({ manager: '', playerOut: '', playerIn: '', gameweek: '' });
-                  } else {
-                    alert('Please fill in all fields');
-                  }
-                }}
-                className="mt-4 w-full p-3 bg-yellow-400 hover:bg-yellow-300 rounded-lg text-red-900 font-black text-lg shadow-lg"
-              >
-                Add Waiver 🍔
-              </button>
-            </div>
-
-            {waivers.length > 0 && (
-              <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 shadow-2xl">
-                <h2 className="text-3xl font-bold text-yellow-300 mb-6 flex items-center gap-3">
-                  <History size={28} />
-                  Waiver History 🍟
-                </h2>
-                <div className="space-y-4">
-                  {waivers.map((waiver) => (
-                    <div key={waiver.id} className="bg-red-900 p-5 rounded-xl border-2 border-yellow-400 flex justify-between items-center flex-wrap gap-4">
-                      <div className="flex-1">
-                        <p className="text-yellow-300 font-bold mb-2">{waiver.managerName} • {waiver.gameweek}</p>
-                        <div className="flex items-center gap-3 flex-wrap">
-                          <span className="text-red-300 flex items-center gap-2">
-                            <TrendingDown size={16} />
-                            {waiver.playerOut}
-                          </span>
-                          <span className="text-yellow-400">→</span>
-                          <span className="text-green-300 flex items-center gap-2">
-                            <TrendingUp size={16} />
-                            {waiver.playerIn}
-                          </span>
-                        </div>
-                        <p className="text-yellow-200 text-xs mt-2">{new Date(waiver.date).toLocaleDateString()}</p>
-                      </div>
-                      <button
-                        onClick={() => deleteWaiver(waiver.id)}
-                        className="px-4 py-2 bg-red-800 border-2 border-red-600 rounded-lg text-red-300 text-sm font-semibold hover:bg-red-700"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
             )}
 
             {/* Transfer Analysis Loading */}
