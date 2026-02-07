@@ -164,7 +164,22 @@
           console.log('League data:', league);
           setLeagueData(league);
 
-          if (league.league_entries) {
+          // Match standings with league_entries to get full team info
+          if (league.standings && league.league_entries) {
+            const standingsWithDetails = league.standings.map(standing => {
+              // Find the matching league entry
+              const entry = league.league_entries.find(e => e.id === standing.league_entry);
+              return {
+                ...standing,
+                entry_id: entry?.entry_id,
+                entry_name: entry?.entry_name || `${entry?.player_first_name || ''} ${entry?.player_last_name || ''}`.trim(),
+                player_name: `${entry?.player_first_name || ''} ${entry?.player_last_name || ''}`.trim(),
+              };
+            });
+            // Sort by rank (already sorted, but just to be sure)
+            setStandings(standingsWithDetails.sort((a, b) => a.rank - b.rank));
+          } else if (league.league_entries) {
+            // Fallback if standings don't exist
             const standingsWithPoints = league.league_entries.map(entry => ({
               ...entry,
               total: entry.total || 0,
@@ -172,8 +187,6 @@
               entry_name: entry.entry_name || `${entry.player_first_name || ''} ${entry.player_last_name || ''}`.trim()
             }));
             setStandings(standingsWithPoints.sort((a, b) => (b.total || 0) - (a.total || 0)));
-          } else if (league.standings) {
-            setStandings(league.standings.sort((a, b) => (b.total || 0) - (a.total || 0)));
           }
 
           setLastUpdated(new Date());
@@ -382,8 +395,8 @@
                       {standings.map((team, idx) => (
                         <tr key={idx} className={`border-b border-gray-800 ${idx === 0 ? 'bg-green-400 bg-opacity-5' : ''}`}>
                           <td className="p-4 text-white font-semibold">
-                            {idx + 1}
-                            {idx === 0 && <Trophy size={16} className="text-yellow-500 inline ml-2" />}
+                            {team.rank || idx + 1}
+                            {(team.rank === 1 || idx === 0) && <Trophy size={16} className="text-yellow-500 inline ml-2" />}
                           </td>
                           <td className="p-4 text-white">{team.entry_name}</td>
                           <td className="p-4 text-green-400 font-bold text-lg">{team.total || 0}</td>
