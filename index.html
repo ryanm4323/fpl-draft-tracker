@@ -208,8 +208,10 @@
               entry_name: entry.entry_name || `${entry.player_first_name || ''} ${entry.player_last_name || ''}`.trim()
             }));
             setStandings(standingsWithPoints.sort((a, b) => (b.total || 0) - (a.total || 0)));
-            
-            // Build position history for all teams across all gameweeks
+          }
+          
+          // Build position history for all teams across all gameweeks (always run)
+          if (league.league_entries) {
             await buildPositionHistory(league.league_entries, apiBase, league);
           }
 
@@ -230,17 +232,25 @@
       };
 
       const buildPositionHistory = async (leagueEntries, apiBase, league) => {
+        console.log('🔵 buildPositionHistory called with:', leagueEntries?.length, 'teams');
         try {
           const currentGW = league?.current_event || 1;
+          console.log('🔵 Current GW:', currentGW);
           const cached = localStorage.getItem('position-history-cache');
           
           if (cached) {
+            console.log('🔵 Found cache, checking validity...');
             const cachedData = JSON.parse(cached);
+            console.log('🔵 Cached GW:', cachedData.gameweek, 'Current GW:', currentGW);
+            console.log('🔵 Cache age:', Math.round((Date.now() - cachedData.timestamp) / 3600000), 'hours');
             if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 86400000) {
-              console.log('Using cached position history');
+              console.log('✅ Using cached position history:', cachedData.history.length, 'entries');
               setPositionHistory(cachedData.history);
               return;
             }
+            console.log('❌ Cache invalid, rebuilding...');
+          } else {
+            console.log('🔵 No cache found, building from scratch...');
           }
           
           console.log('Building position history for', currentGW, 'gameweeks (cached 24h)...');
