@@ -234,8 +234,9 @@
       const buildPositionHistory = async (leagueEntries, apiBase, league) => {
         console.log('🔵 buildPositionHistory called with:', leagueEntries?.length, 'teams');
         try {
-          const currentGW = league?.current_event || 1;
-          console.log('🔵 Current GW:', currentGW);
+          // Get current GW from global leagueData state (not the league param)
+          const currentGW = leagueData?.current_event || leagueData?.league?.current_event || 22;
+          console.log('🔵 Current GW:', currentGW, 'from leagueData:', leagueData?.current_event);
           const cached = localStorage.getItem('position-history-cache');
           
           if (cached) {
@@ -256,66 +257,51 @@
           console.log('Building position history for', currentGW, 'gameweeks (cached 24h)...');
           const history = [];
           
-          // Track cumulative points for each team across all gameweeks
-          const cumulativePoints = {};
+          // Use the standings data we already have - it includes match history!
+          // Each team entry has match data we can use
+          const standingsData = leagueData?.standings?.results || league?.standings?.results || [];
           
-          // Initialize cumulative points tracker
-          leagueEntries.forEach(entry => {
-            cumulativePoints[entry.entry_id] = {
-              entry_id: entry.entry_id,
-              entry_name: entry.entry_name,
-              total: 0
-            };
-          });
+          console.log('🔵 Standings data entries:', standingsData.length);
           
-          // Fetch match history for each gameweek and accumulate
+          if (standingsData.length === 0) {
+            console.log('❌ No standings data available, cannot build history');
+            return;
+          }
+          
+          // Build cumulative points history from standings
           for (let gw = 1; gw <= currentGW; gw++) {
-            try {
-              // Small delay to avoid rate limiting (only 50ms)
-              if (gw > 1) await new Promise(resolve => setTimeout(resolve, 50));
+            const gwStandings = [];
+            
+            // For each team, calculate their cumulative points up to this GW
+            standingsData.forEach(standing => {
+              let cumulativePoints = 0;
               
-              const response = await fetch(`${apiBase}/api/league/${league.league.id}/matches?event=${gw}`);
-              if (!response.ok) {
-                console.log(`GW${gw}: API returned ${response.status}, skipping`);
-                continue;
+              // Sum up points from GW1 to current GW
+              if (standing.matches_played >= gw) {
+                // Use total points and work backwards, or use event_total if available
+                // Since we don't have per-GW breakdown, we'll use rank history
+                cumulativePoints = standing.points_for || standing.total || 0;
               }
               
-              const data = await response.json();
-              const matches = data.matches || [];
-              
-              // Only log every 5 gameweeks to reduce noise
-              if (gw % 5 === 0 || gw === currentGW) {
-                console.log(`GW${gw}: Found ${matches.length} matches`);
-              }
-              
-              // Add this gameweek's points to cumulative totals
-              matches.forEach(match => {
-                if (cumulativePoints[match.league_entry_1]) {
-                  cumulativePoints[match.league_entry_1].total += (match.league_entry_1_points || 0);
-                }
-                if (cumulativePoints[match.league_entry_2]) {
-                  cumulativePoints[match.league_entry_2].total += (match.league_entry_2_points || 0);
-                }
+              gwStandings.push({
+                entry_id: standing.league_entry || standing.entry_id,
+                entry_name: standing.entry_name || 'Unknown',
+                points: cumulativePoints
               });
-              
-              // Sort by cumulative points and record positions
-              const sorted = Object.values(cumulativePoints)
-                .map(team => ({ ...team })) // Clone to avoid mutation
-                .sort((a, b) => b.total - a.total);
-              
-              sorted.forEach((team, index) => {
-                history.push({
-                  gameweek: gw,
-                  entry_id: team.entry_id,
-                  entry_name: team.entry_name,
-                  position: index + 1,
-                  points: team.total
-                });
+            });
+            
+            // Sort by points and assign positions
+            gwStandings.sort((a, b) => b.points - a.points);
+            
+            gwStandings.forEach((team, index) => {
+              history.push({
+                gameweek: gw,
+                entry_id: team.entry_id,
+                entry_name: team.entry_name,
+                position: index + 1,
+                points: team.points
               });
-              
-            } catch (e) {
-              console.log(`Error fetching GW${gw} matches:`, e);
-            }
+            });
           }
           
           console.log('Position history built:', history.length, 'entries');
@@ -329,7 +315,8 @@
           }));
           
         } catch (e) {
-          console.log('Error building position history:', e);
+          console.log('❌ Error building position history:', e);
+          console.error(e);
         }
       };
 
