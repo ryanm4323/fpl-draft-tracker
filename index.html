@@ -251,12 +251,12 @@
 
       const analyzeTransfersWithCache = async (transactions, apiBase) => {
         try {
-          // Check if we have cached analysis
-          const cached = await window.storage.get('transfer-analysis-cache', true);
+          // Check if we have cached analysis in localStorage
+          const cached = localStorage.getItem('transfer-analysis-cache');
           
-          if (cached && cached.value) {
-            const cachedData = JSON.parse(cached.value);
-            // Check if cache is still valid (same gameweek)
+          if (cached) {
+            const cachedData = JSON.parse(cached);
+            // Check if cache is still valid (same gameweek and less than 1 hour old)
             const currentGW = leagueData?.current_event || 1;
             if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 3600000) {
               console.log('Using cached transfer analysis');
@@ -297,16 +297,27 @@
           
           setAnalysisProgress('Step 2/4: Fetching gameweek data...');
           
-          // Step 2: Get current gameweek - handle different API structures
+          // Step 2: Get current gameweek from league data or bootstrap
           let currentGW = 1;
-          if (bootstrap.events && Array.isArray(bootstrap.events)) {
-            const currentEvent = bootstrap.events.find(e => e.is_current);
-            const finishedEvent = bootstrap.events.filter(e => e.finished).pop();
-            currentGW = currentEvent?.id || finishedEvent?.id || 1;
-          } else if (bootstrap.current_event) {
-            currentGW = bootstrap.current_event;
-          } else if (leagueData?.current_event) {
-            currentGW = leagueData.current_event;
+          
+          // Try to get from league standings data first (most reliable)
+          if (standings && standings.length > 0 && standings[0].event_total !== undefined) {
+            // Find the highest gameweek from transactions
+            const maxTransactionGW = Math.max(...transactions.map(t => t.event || 0));
+            currentGW = Math.max(maxTransactionGW, 1);
+          }
+          
+          // Fallback to bootstrap data
+          if (currentGW === 1 && bootstrap.events && Array.isArray(bootstrap.events)) {
+            const finishedEvents = bootstrap.events.filter(e => e.finished);
+            if (finishedEvents.length > 0) {
+              currentGW = Math.max(...finishedEvents.map(e => e.id));
+            }
+          }
+          
+          // Fallback to direct properties
+          if (currentGW === 1) {
+            currentGW = bootstrap.current_event || leagueData?.current_event || 22; // Default to 22 if nothing works
           }
           
           console.log('Current gameweek:', currentGW);
@@ -320,10 +331,21 @@
               const liveResponse = await fetch(`${apiBase}/api/event/${gw}/live`);
               if (liveResponse.ok) {
                 const liveData = await liveResponse.json();
-                if (liveData.elements) {
-                  liveData.elements.forEach(el => {
+                
+                // Handle different API response structures
+                const elements = liveData.elements || liveData;
+                
+                if (Array.isArray(elements)) {
+                  elements.forEach(el => {
                     if (!playerPoints[el.id]) playerPoints[el.id] = {};
                     playerPoints[el.id][gw] = el.stats?.total_points || 0;
+                  });
+                } else if (typeof elements === 'object') {
+                  // Elements might be an object with player IDs as keys
+                  Object.keys(elements).forEach(id => {
+                    const el = elements[id];
+                    if (!playerPoints[id]) playerPoints[id] = {};
+                    playerPoints[id][gw] = el.stats?.total_points || 0;
                   });
                 }
               }
@@ -401,13 +423,13 @@
           
           setTransferAnalysis(analysis);
           
-          // Cache the results
+          // Cache the results in localStorage
           try {
-            await window.storage.set('transfer-analysis-cache', JSON.stringify({
+            localStorage.setItem('transfer-analysis-cache', JSON.stringify({
               gameweek: currentGW,
               timestamp: Date.now(),
               analysis
-            }), true);
+            }));
             console.log('Analysis cached successfully');
           } catch (e) {
             console.log('Failed to cache analysis:', e);
@@ -424,9 +446,9 @@
 
       const loadWaivers = async () => {
         try {
-          const result = await window.storage.get('draft-waivers');
-          if (result && result.value) {
-            setWaivers(JSON.parse(result.value));
+          const result = localStorage.getItem('draft-waivers');
+          if (result) {
+            setWaivers(JSON.parse(result));
           }
         } catch (err) {
           console.log('No previous waivers found');
@@ -435,7 +457,7 @@
 
       const saveWaivers = async (newWaivers) => {
         try {
-          await window.storage.set('draft-waivers', JSON.stringify(newWaivers));
+          localStorage.setItem('draft-waivers', JSON.stringify(newWaivers));
           setWaivers(newWaivers);
         } catch (err) {
           console.error('Error saving waivers:', err);
