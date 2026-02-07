@@ -1,0 +1,8 @@
+{
+  "name": "fpl-draft-tracker",
+  "version": "1.0.0",
+  "description": "FPL Draft League Tracker for Spreadsheet Merchants 3.0",
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  }
+}
