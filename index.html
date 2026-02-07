@@ -450,13 +450,6 @@
         await saveWaivers(updatedWaivers);
       };
 
-      const [waiverForm, setWaiverForm] = useState({
-        manager: '',
-        playerOut: '',
-        playerIn: '',
-        gameweek: '',
-      });
-
       if (!isAuthenticated) {
         return (
           <div className="min-h-screen bg-gradient-to-br from-red-900 via-yellow-600 to-red-800 flex items-center justify-center p-5">
