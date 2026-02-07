@@ -234,15 +234,10 @@
       const buildPositionHistory = async (leagueEntries, apiBase, league) => {
         console.log('🔵 buildPositionHistory called with:', leagueEntries?.length, 'teams');
         try {
-          console.log('🔵 Full leagueData object:', leagueData);
           console.log('🔵 League param:', league);
           
           // Get current GW - try multiple paths
-          const currentGW = leagueData?.current_event || 
-                          leagueData?.league?.current_event || 
-                          league?.current_event ||
-                          league?.league?.current_event ||
-                          22; // Default to 22 for now
+          const currentGW = league?.league?.current_event || 22;
           console.log('🔵 Current GW:', currentGW);
           
           // CLEAR BAD CACHE if it has 0 entries
@@ -270,57 +265,76 @@
             console.log('🔵 No cache found, building from scratch...');
           }
           
-          console.log('Building position history for', currentGW, 'gameweeks (cached 24h)...');
+          console.log('🔵 Fetching individual team histories...');
           const history = [];
           
-          // Use the standings data we already have - it includes match history!
-          // Each team entry has match data we can use
-          const standingsData = leagueData?.standings?.results || league?.standings?.results || [];
+          // Fetch history for each team
+          const teamHistories = [];
           
-          console.log('🔵 Standings data entries:', standingsData.length);
+          for (const entry of leagueEntries) {
+            try {
+              const response = await fetch(`${apiBase}/api/entry/${entry.entry_id}/history`);
+              if (!response.ok) {
+                console.log(`❌ Failed to fetch history for team ${entry.entry_id}`);
+                continue;
+              }
+              
+              const data = await response.json();
+              teamHistories.push({
+                entry_id: entry.entry_id,
+                entry_name: entry.entry_name,
+                history: data.history || []
+              });
+              
+              // Small delay to avoid rate limiting
+              await new Promise(resolve => setTimeout(resolve, 100));
+              
+            } catch (e) {
+              console.log(`❌ Error fetching team ${entry.entry_id}:`, e);
+            }
+          }
           
-          if (standingsData.length === 0) {
-            console.log('❌ No standings data available, cannot build history');
+          console.log(`🔵 Fetched ${teamHistories.length} team histories`);
+          
+          if (teamHistories.length === 0) {
+            console.log('❌ No team histories available');
             return;
           }
           
-          // Build cumulative points history from standings
+          // For each gameweek, rank all teams by their total_points at that GW
           for (let gw = 1; gw <= currentGW; gw++) {
             const gwStandings = [];
             
-            // For each team, calculate their cumulative points up to this GW
-            standingsData.forEach(standing => {
-              let cumulativePoints = 0;
+            teamHistories.forEach(team => {
+              // Find this team's score at this gameweek
+              const gwData = team.history.find(h => h.event === gw);
               
-              // Sum up points from GW1 to current GW
-              if (standing.matches_played >= gw) {
-                // Use total points and work backwards, or use event_total if available
-                // Since we don't have per-GW breakdown, we'll use rank history
-                cumulativePoints = standing.points_for || standing.total || 0;
+              if (gwData) {
+                gwStandings.push({
+                  entry_id: team.entry_id,
+                  entry_name: team.entry_name,
+                  total_points: gwData.total_points,
+                  gw_points: gwData.points
+                });
               }
-              
-              gwStandings.push({
-                entry_id: standing.league_entry || standing.entry_id,
-                entry_name: standing.entry_name || 'Unknown',
-                points: cumulativePoints
-              });
             });
             
-            // Sort by points and assign positions
-            gwStandings.sort((a, b) => b.points - a.points);
+            // Sort by total_points descending (highest first)
+            gwStandings.sort((a, b) => b.total_points - a.total_points);
             
+            // Assign positions
             gwStandings.forEach((team, index) => {
               history.push({
                 gameweek: gw,
                 entry_id: team.entry_id,
                 entry_name: team.entry_name,
                 position: index + 1,
-                points: team.points
+                points: team.total_points
               });
             });
           }
           
-          console.log('Position history built:', history.length, 'entries');
+          console.log('✅ Position history built:', history.length, 'entries');
           setPositionHistory(history);
           
           // Cache the results
