@@ -219,34 +219,58 @@
       const fetchAllTransactions = async (leagueEntries, apiBase) => {
         const transactionsData = [];
         
-        for (const entry of leagueEntries) {
-          try {
-            const transResponse = await fetch(`${apiBase}/api/draft/entry/${entry.entry_id}/transactions`);
-            if (transResponse.ok) {
-              const transactions = await transResponse.json();
-              console.log(`Transactions for ${entry.entry_name}:`, transactions);
-              
-              // Add team info to each transaction
-              if (transactions.transactions) {
-                transactions.transactions.forEach(t => {
-                  transactionsData.push({
-                    ...t,
-                    team_name: entry.entry_name,
-                    team_id: entry.entry_id
-                  });
-                });
-              }
-            }
-          } catch (e) {
-            console.log(`Could not fetch transactions for ${entry.entry_name}:`, e);
+        try {
+          // Fetch league-wide transactions in one call
+          const leagueId = leagueData?.league?.id;
+          if (!leagueId) {
+            console.log('No league ID found');
+            return;
           }
+          
+          console.log(`Fetching all transactions for league ${leagueId}...`);
+          const transResponse = await fetch(`${apiBase}/api/draft/league/${leagueId}/transactions`);
+          
+          if (transResponse.ok) {
+            const transactions = await transResponse.json();
+            console.log('Raw league transactions response:', transactions);
+            
+            // Try different possible structures
+            let transactionList = transactions.transactions || 
+                                 transactions.results || 
+                                 transactions || 
+                                 [];
+            
+            if (Array.isArray(transactionList) && transactionList.length > 0) {
+              console.log(`Found ${transactionList.length} transactions for entire league`);
+              
+              // Match each transaction to a team name
+              transactionList.forEach(t => {
+                const entry = leagueEntries.find(e => e.entry_id === t.entry);
+                transactionsData.push({
+                  ...t,
+                  team_name: entry?.entry_name || 'Unknown Team',
+                  team_id: t.entry
+                });
+              });
+            } else {
+              console.log('No transactions found in response');
+            }
+          } else {
+            console.log(`Failed to fetch league transactions: ${transResponse.status}`);
+          }
+        } catch (e) {
+          console.log('Error fetching league transactions:', e);
         }
         
         console.log('All transactions collected:', transactionsData);
         setAllTransactions(transactionsData);
         
         // After fetching transactions, check cache and analyze if needed
-        await analyzeTransfersWithCache(transactionsData, apiBase);
+        if (transactionsData.length > 0) {
+          await analyzeTransfersWithCache(transactionsData, apiBase);
+        } else {
+          console.log('No transactions to analyze - skipping transfer analysis');
+        }
       };
 
       const analyzeTransfersWithCache = async (transactions, apiBase) => {
