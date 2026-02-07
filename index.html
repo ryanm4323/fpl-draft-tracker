@@ -145,10 +145,11 @@
           
           console.log('Entry data:', entryData);
           
-          const actualLeagueId = entryData.entry?.league || entryData.league;
+          // Extract league ID from entry data - it's in league_set array
+          const actualLeagueId = entryData.entry?.league_set?.[0] || entryData.league_set?.[0];
           
           if (!actualLeagueId) {
-            throw new Error('Could not find league ID in entry data.');
+            throw new Error('Could not find league ID in entry data. Data: ' + JSON.stringify(entryData));
           }
           
           console.log('Found league ID:', actualLeagueId);
