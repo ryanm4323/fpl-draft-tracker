@@ -203,7 +203,7 @@
           // Fetch all team transactions for waiver analysis
           console.log('Fetching transactions for all teams...');
           if (league.league_entries) {
-            await fetchAllTransactions(league.league_entries, apiBase);
+            await fetchAllTransactions(league.league_entries, apiBase, league);
           }
 
           setLastUpdated(new Date());
@@ -216,29 +216,43 @@
         }
       };
 
-      const fetchAllTransactions = async (leagueEntries, apiBase) => {
+      const fetchAllTransactions = async (leagueEntries, apiBase, league) => {
         const transactionsData = [];
         
         try {
-          // Fetch league-wide transactions in one call
-          const leagueId = leagueData?.league?.id;
+          // Get league ID from the passed league data
+          const leagueId = league?.league?.id;
+          console.log('League data available:', league);
+          console.log('Extracted league ID:', leagueId);
+          
           if (!leagueId) {
-            console.log('No league ID found');
+            console.log('ERROR: No league ID found in league');
+            console.log('Full league object:', JSON.stringify(league));
             return;
           }
           
           console.log(`Fetching all transactions for league ${leagueId}...`);
-          const transResponse = await fetch(`${apiBase}/api/draft/league/${leagueId}/transactions`);
+          const transUrl = `${apiBase}/api/draft/league/${leagueId}/transactions`;
+          console.log('Fetching from URL:', transUrl);
+          
+          const transResponse = await fetch(transUrl);
+          console.log('Transaction response status:', transResponse.status);
           
           if (transResponse.ok) {
             const transactions = await transResponse.json();
             console.log('Raw league transactions response:', transactions);
+            console.log('Transaction keys:', Object.keys(transactions));
             
             // Try different possible structures
             let transactionList = transactions.transactions || 
                                  transactions.results || 
-                                 transactions || 
-                                 [];
+                                 transactions.waivers ||
+                                 (Array.isArray(transactions) ? transactions : []);
+            
+            console.log('Transaction list type:', typeof transactionList);
+            console.log('Is array?', Array.isArray(transactionList));
+            console.log('Transaction list length:', transactionList?.length);
+            console.log('First transaction:', transactionList?.[0]);
             
             if (Array.isArray(transactionList) && transactionList.length > 0) {
               console.log(`Found ${transactionList.length} transactions for entire league`);
@@ -253,16 +267,20 @@
                 });
               });
             } else {
-              console.log('No transactions found in response');
+              console.log('WARNING: No transactions found in response or not an array');
             }
           } else {
-            console.log(`Failed to fetch league transactions: ${transResponse.status}`);
+            console.log(`ERROR: Failed to fetch league transactions: ${transResponse.status}`);
+            const errorText = await transResponse.text();
+            console.log('Error response:', errorText);
           }
         } catch (e) {
-          console.log('Error fetching league transactions:', e);
+          console.log('ERROR: Exception fetching league transactions:', e);
+          console.error(e);
         }
         
-        console.log('All transactions collected:', transactionsData);
+        console.log('Final transactions collected:', transactionsData.length, 'transactions');
+        console.log('Sample transactions:', transactionsData.slice(0, 3));
         setAllTransactions(transactionsData);
         
         // After fetching transactions, check cache and analyze if needed
@@ -384,7 +402,8 @@
           const transferResults = [];
           
           transactions.forEach(trans => {
-            if (trans.kind !== 'w' || !trans.element_in || !trans.element_out) return;
+            // Only process accepted waivers (not free agents and not denied)
+            if (trans.kind !== 'w' || trans.result !== 'a' || !trans.element_in || !trans.element_out) return;
             
             const gwMade = trans.event;
             const playerIn = playerLookup[trans.element_in];
