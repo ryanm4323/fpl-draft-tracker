@@ -297,9 +297,19 @@
           
           setAnalysisProgress('Step 2/4: Fetching gameweek data...');
           
-          // Step 2: Get current gameweek
-          const currentGW = bootstrap.events?.find(e => e.is_current)?.id || 
-                           bootstrap.events?.find(e => e.finished)?.id || 1;
+          // Step 2: Get current gameweek - handle different API structures
+          let currentGW = 1;
+          if (bootstrap.events && Array.isArray(bootstrap.events)) {
+            const currentEvent = bootstrap.events.find(e => e.is_current);
+            const finishedEvent = bootstrap.events.filter(e => e.finished).pop();
+            currentGW = currentEvent?.id || finishedEvent?.id || 1;
+          } else if (bootstrap.current_event) {
+            currentGW = bootstrap.current_event;
+          } else if (leagueData?.current_event) {
+            currentGW = leagueData.current_event;
+          }
+          
+          console.log('Current gameweek:', currentGW);
           
           // Step 3: Fetch player points for each completed gameweek
           setAnalysisProgress(`Step 3/4: Analyzing ${currentGW} gameweeks...`);
