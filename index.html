@@ -246,22 +246,24 @@
 
       if (!isAuthenticated) {
         return (
-          <div className="min-h-screen bg-gradient-to-br from-gray-950 via-purple-950 to-blue-950 flex items-center justify-center p-5">
-            <div className="bg-gradient-to-br from-gray-900 to-blue-900 p-16 rounded-3xl border-4 border-green-400 shadow-2xl max-w-md w-full text-center">
-              <Lock size={64} className="text-green-400 mx-auto mb-5" />
-              <h1 className="text-green-400 text-5xl font-black mb-3">FPL DRAFT</h1>
-              <p className="text-gray-500 mb-10">League Tracker</p>
+          <div className="min-h-screen bg-gradient-to-br from-red-900 via-yellow-600 to-red-800 flex items-center justify-center p-5">
+            <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-16 rounded-3xl border-4 border-yellow-400 shadow-2xl max-w-md w-full text-center">
+              <div className="text-7xl mb-5">🍔</div>
+              <Lock size={64} className="text-yellow-300 mx-auto mb-5" />
+              <h1 className="text-yellow-300 text-5xl font-black mb-3">FPL DRAFT</h1>
+              <p className="text-yellow-100 mb-2 text-2xl font-bold">Spreadsheet Merchants 3.0</p>
+              <p className="text-red-900 mb-10 font-bold">🍟 McDonald's Punishment League 🍟</p>
               <form onSubmit={handlePasswordSubmit}>
                 <input
                   type="password"
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
                   placeholder="Enter password"
-                  className="w-full p-4 mb-5 bg-gray-950 border-2 border-green-400 rounded-xl text-white text-lg"
+                  className="w-full p-4 mb-5 bg-red-900 border-2 border-yellow-400 rounded-xl text-yellow-100 text-lg placeholder-yellow-300"
                   autoFocus
                 />
-                <button type="submit" className="w-full p-4 bg-gradient-to-r from-green-400 to-green-500 rounded-xl text-gray-900 font-bold text-lg hover:scale-105 transition-transform">
-                  Enter
+                <button type="submit" className="w-full p-4 bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-xl text-red-900 font-bold text-lg hover:scale-105 transition-transform shadow-lg">
+                  Enter The Golden Arches
                 </button>
               </form>
             </div>
@@ -270,7 +272,7 @@
       }
 
       return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-950 via-purple-950 to-blue-950 p-5">
+        <div className="min-h-screen bg-gradient-to-br from-red-900 via-yellow-600 to-red-800 p-5">
           {showConfig && (
             <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-5">
               <div className="bg-gradient-to-br from-gray-900 to-blue-900 p-10 rounded-2xl max-w-2xl w-full border-2 border-green-400 shadow-2xl">
@@ -326,26 +328,30 @@
             </div>
           )}
 
-          <div className="max-w-7xl mx-auto mb-10 bg-gradient-to-br from-gray-900 to-blue-900 p-8 rounded-2xl border-2 border-green-400 shadow-xl">
+          <div className="max-w-7xl mx-auto mb-10 bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 shadow-2xl">
             <div className="flex justify-between items-center flex-wrap gap-5">
               <div>
-                <h1 className="text-5xl font-black bg-gradient-to-r from-green-400 to-green-500 bg-clip-text text-transparent mb-2">
+                <div className="text-6xl mb-2">🍔</div>
+                <h1 className="text-6xl font-black text-yellow-300 mb-2" style={{textShadow: '3px 3px 0px rgba(139, 0, 0, 0.8)'}}>
                   {config.leagueName}
                 </h1>
-                <p className="text-gray-500">
-                  FPL Draft League Tracker {lastUpdated && `• ${lastUpdated.toLocaleTimeString()}`}
+                <p className="text-yellow-100 font-bold text-lg">
+                  🍟 McDonald's Punishment League 🍟
+                </p>
+                <p className="text-red-900 font-semibold">
+                  {lastUpdated && `Last updated: ${lastUpdated.toLocaleTimeString()}`}
                 </p>
               </div>
               <div className="flex gap-3">
                 <button
                   onClick={fetchLeagueData}
                   disabled={loading}
-                  className={`px-6 py-4 rounded-xl font-bold flex items-center gap-2 ${loading ? 'bg-gray-700' : 'bg-gradient-to-r from-green-400 to-green-500 text-gray-900'}`}
+                  className={`px-6 py-4 rounded-xl font-bold flex items-center gap-2 border-2 ${loading ? 'bg-red-900 border-yellow-600' : 'bg-yellow-400 text-red-900 border-yellow-500 hover:bg-yellow-300'} shadow-lg`}
                 >
                   <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-                  {loading ? 'Loading...' : 'Refresh'}
+                  {loading ? 'Loading...' : '🔄 Refresh'}
                 </button>
-                <button onClick={() => setShowConfig(true)} className="px-6 py-4 bg-gray-800 border-2 border-gray-600 rounded-xl text-white font-semibold flex items-center gap-2">
+                <button onClick={() => setShowConfig(true)} className="px-6 py-4 bg-red-800 border-2 border-yellow-400 rounded-xl text-yellow-300 font-semibold flex items-center gap-2 hover:bg-red-700">
                   <Settings size={18} />
                   Settings
                 </button>
@@ -376,73 +382,186 @@
             )}
 
             {standings.length > 0 && (
-              <div className="bg-gradient-to-br from-gray-900 to-blue-900 p-8 rounded-2xl border-2 border-green-400 mb-8">
-                <h2 className="text-3xl font-bold text-green-400 mb-6 flex items-center gap-3">
+              <>
+                {/* McDonald's Punishment Tracker */}
+                <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mb-8 shadow-2xl">
+                  <h2 className="text-4xl font-black text-yellow-300 mb-6 flex items-center gap-3" style={{textShadow: '2px 2px 0px rgba(139, 0, 0, 0.8)'}}>
+                    🍔 McDonald's Punishment Tracker
+                  </h2>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    {/* Winner Section */}
+                    <div className="bg-yellow-400 p-6 rounded-2xl border-4 border-yellow-300 shadow-lg">
+                      <h3 className="text-2xl font-black text-red-900 mb-4">🏆 CHAMPION</h3>
+                      {standings[0] && (
+                        <div className="text-center">
+                          <p className="text-3xl font-black text-red-900 mb-2">{standings[0].entry_name}</p>
+                          <p className="text-xl font-bold text-red-800">Wins $200 Merch!</p>
+                          <p className="text-sm text-red-700 mt-2">Paid by 2nd-12th place ($18.18 each)</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Safe Zone */}
+                    <div className="bg-green-500 p-6 rounded-2xl border-4 border-green-400 shadow-lg">
+                      <h3 className="text-2xl font-black text-white mb-4">😌 SAFE ZONE</h3>
+                      <div className="text-center">
+                        <p className="text-lg font-bold text-white">2nd - 6th Place</p>
+                        <p className="text-3xl my-2">✅</p>
+                        <p className="text-sm text-white">No punishment!</p>
+                        <div className="mt-3 text-lg font-bold text-white">
+                          <p>9th Place</p>
+                          <p className="text-sm">The Lucky Escape! 🍀</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Punishment Table */}
+                  <div className="bg-red-900 p-6 rounded-2xl border-4 border-red-700">
+                    <h3 className="text-2xl font-black text-yellow-300 mb-4">⚠️ THE DANGER ZONE ⚠️</h3>
+                    <div className="space-y-3">
+                      {[
+                        { rank: 7, hours: 8 },
+                        { rank: 8, hours: 10 },
+                        { rank: 10, hours: 14 },
+                        { rank: 11, hours: 16 },
+                        { rank: 12, hours: 18 }
+                      ].map(punishment => {
+                        const team = standings.find(s => s.rank === punishment.rank);
+                        return team ? (
+                          <div key={punishment.rank} className={`bg-red-800 p-4 rounded-xl border-2 ${punishment.rank === 12 ? 'border-yellow-400 shadow-lg' : 'border-red-600'}`}>
+                            <div className="flex justify-between items-center flex-wrap gap-3">
+                              <div className="flex items-center gap-3">
+                                <span className="text-3xl">{punishment.rank === 12 ? '💀' : '🍔'}</span>
+                                <div>
+                                  <p className="text-lg font-bold text-yellow-300">{punishment.rank}th Place: {team.entry_name}</p>
+                                  <p className="text-sm text-yellow-100">{team.total} points</p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-3xl font-black text-yellow-400">{punishment.hours} hrs</p>
+                                <p className="text-xs text-yellow-200">in McDonald's</p>
+                              </div>
+                            </div>
+                            {/* French fry progress bar */}
+                            <div className="mt-3 bg-red-950 rounded-full h-3 overflow-hidden">
+                              <div 
+                                className="bg-yellow-400 h-full rounded-full transition-all"
+                                style={{width: `${(punishment.hours / 18) * 100}%`}}
+                              ></div>
+                            </div>
+                          </div>
+                        ) : null;
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* League Standings */}
+                <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mb-8 shadow-2xl">
+                <h2 className="text-3xl font-bold text-yellow-300 mb-6 flex items-center gap-3">
                   <Users size={28} />
-                  League Standings
+                  Full League Standings
                 </h2>
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
-                      <tr className="border-b-2 border-green-400">
-                        <th className="p-4 text-left text-green-400">Rank</th>
-                        <th className="p-4 text-left text-green-400">Manager</th>
-                        <th className="p-4 text-left text-green-400">Points</th>
-                        <th className="p-4 text-left text-green-400">Form</th>
+                      <tr className="border-b-4 border-yellow-400">
+                        <th className="p-4 text-left text-yellow-300 font-bold">Rank</th>
+                        <th className="p-4 text-left text-yellow-300 font-bold">Team</th>
+                        <th className="p-4 text-left text-yellow-300 font-bold">Points</th>
+                        <th className="p-4 text-left text-yellow-300 font-bold">This GW</th>
+                        <th className="p-4 text-left text-yellow-300 font-bold">Status</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {standings.map((team, idx) => (
-                        <tr key={idx} className={`border-b border-gray-800 ${idx === 0 ? 'bg-green-400 bg-opacity-5' : ''}`}>
-                          <td className="p-4 text-white font-semibold">
-                            {team.rank || idx + 1}
-                            {(team.rank === 1 || idx === 0) && <Trophy size={16} className="text-yellow-500 inline ml-2" />}
-                          </td>
-                          <td className="p-4 text-white">{team.entry_name}</td>
-                          <td className="p-4 text-green-400 font-bold text-lg">{team.total || 0}</td>
-                          <td className="p-4">
-                            <span className="px-3 py-1 bg-green-400 bg-opacity-10 rounded-full text-green-400 text-sm">
-                              {team.event_total || 0} pts
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {standings.map((team, idx) => {
+                        let status = '';
+                        let statusColor = '';
+                        if (team.rank === 1) {
+                          status = '🏆 WINNER';
+                          statusColor = 'text-yellow-300 font-black';
+                        } else if (team.rank >= 2 && team.rank <= 6) {
+                          status = '✅ Safe';
+                          statusColor = 'text-green-300';
+                        } else if (team.rank === 9) {
+                          status = '🍀 Lucky!';
+                          statusColor = 'text-green-300';
+                        } else if (team.rank === 7) {
+                          status = '🍔 8hrs';
+                          statusColor = 'text-orange-300';
+                        } else if (team.rank === 8) {
+                          status = '🍔 10hrs';
+                          statusColor = 'text-orange-300';
+                        } else if (team.rank === 10) {
+                          status = '⚠️ 14hrs';
+                          statusColor = 'text-red-300';
+                        } else if (team.rank === 11) {
+                          status = '💀 16hrs';
+                          statusColor = 'text-red-400';
+                        } else if (team.rank === 12) {
+                          status = '💀 18hrs';
+                          statusColor = 'text-red-500 font-black';
+                        }
+                        
+                        return (
+                          <tr key={idx} className={`border-b-2 border-yellow-600 ${team.rank === 1 ? 'bg-yellow-400 bg-opacity-20' : team.rank === 12 ? 'bg-red-900 bg-opacity-50' : ''}`}>
+                            <td className="p-4 text-yellow-100 font-semibold text-lg">
+                              {team.rank}
+                              {team.rank === 1 && <Trophy size={16} className="text-yellow-400 inline ml-2" />}
+                              {team.rank === 12 && <span className="ml-2">💀</span>}
+                            </td>
+                            <td className="p-4 text-yellow-100 font-bold">{team.entry_name}</td>
+                            <td className="p-4 text-yellow-300 font-bold text-xl">{team.total || 0}</td>
+                            <td className="p-4">
+                              <span className="px-3 py-1 bg-yellow-400 bg-opacity-30 rounded-full text-yellow-200 text-sm font-semibold">
+                                {team.event_total || 0} pts
+                              </span>
+                            </td>
+                            <td className={`p-4 font-bold ${statusColor}`}>
+                              {status}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </div>
+              </>
             )}
 
-            <div className="bg-gradient-to-br from-gray-900 to-blue-900 p-8 rounded-xl border-2 border-green-400 mb-8">
-              <h3 className="text-green-400 mb-5 text-xl font-bold">📝 Add Waiver Transaction</h3>
+            <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mb-8 shadow-2xl">
+              <h3 className="text-yellow-300 mb-5 text-2xl font-black">🔄 Add Waiver Transaction</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <input
                   type="text"
                   placeholder="Manager Name"
                   value={waiverForm.manager}
                   onChange={(e) => setWaiverForm({ ...waiverForm, manager: e.target.value })}
-                  className="p-3 bg-gray-950 border-2 border-gray-700 rounded-lg text-white"
+                  className="p-3 bg-red-900 border-2 border-yellow-400 rounded-lg text-yellow-100 placeholder-yellow-300"
                 />
                 <input
                   type="text"
                   placeholder="Gameweek (e.g., GW23)"
                   value={waiverForm.gameweek}
                   onChange={(e) => setWaiverForm({ ...waiverForm, gameweek: e.target.value })}
-                  className="p-3 bg-gray-950 border-2 border-gray-700 rounded-lg text-white"
+                  className="p-3 bg-red-900 border-2 border-yellow-400 rounded-lg text-yellow-100 placeholder-yellow-300"
                 />
                 <input
                   type="text"
                   placeholder="Player OUT"
                   value={waiverForm.playerOut}
                   onChange={(e) => setWaiverForm({ ...waiverForm, playerOut: e.target.value })}
-                  className="p-3 bg-gray-950 border-2 border-gray-700 rounded-lg text-white"
+                  className="p-3 bg-red-900 border-2 border-yellow-400 rounded-lg text-yellow-100 placeholder-yellow-300"
                 />
                 <input
                   type="text"
                   placeholder="Player IN"
                   value={waiverForm.playerIn}
                   onChange={(e) => setWaiverForm({ ...waiverForm, playerIn: e.target.value })}
-                  className="p-3 bg-gray-950 border-2 border-gray-700 rounded-lg text-white"
+                  className="p-3 bg-red-900 border-2 border-yellow-400 rounded-lg text-yellow-100 placeholder-yellow-300"
                 />
               </div>
               <button
@@ -454,39 +573,39 @@
                     alert('Please fill in all fields');
                   }
                 }}
-                className="mt-4 w-full p-3 bg-gradient-to-r from-green-400 to-green-500 rounded-lg text-gray-900 font-bold"
+                className="mt-4 w-full p-3 bg-yellow-400 hover:bg-yellow-300 rounded-lg text-red-900 font-black text-lg shadow-lg"
               >
-                Add Waiver
+                Add Waiver 🍔
               </button>
             </div>
 
             {waivers.length > 0 && (
-              <div className="bg-gradient-to-br from-gray-900 to-blue-900 p-8 rounded-2xl border-2 border-green-400">
-                <h2 className="text-3xl font-bold text-green-400 mb-6 flex items-center gap-3">
+              <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 shadow-2xl">
+                <h2 className="text-3xl font-bold text-yellow-300 mb-6 flex items-center gap-3">
                   <History size={28} />
-                  Waiver History
+                  Waiver History 🍟
                 </h2>
                 <div className="space-y-4">
                   {waivers.map((waiver) => (
-                    <div key={waiver.id} className="bg-gray-950 p-5 rounded-xl border border-gray-800 flex justify-between items-center flex-wrap gap-4">
+                    <div key={waiver.id} className="bg-red-900 p-5 rounded-xl border-2 border-yellow-400 flex justify-between items-center flex-wrap gap-4">
                       <div className="flex-1">
-                        <p className="text-green-400 font-bold mb-2">{waiver.managerName} • {waiver.gameweek}</p>
+                        <p className="text-yellow-300 font-bold mb-2">{waiver.managerName} • {waiver.gameweek}</p>
                         <div className="flex items-center gap-3 flex-wrap">
-                          <span className="text-red-400 flex items-center gap-2">
+                          <span className="text-red-300 flex items-center gap-2">
                             <TrendingDown size={16} />
                             {waiver.playerOut}
                           </span>
-                          <span className="text-gray-600">→</span>
-                          <span className="text-green-500 flex items-center gap-2">
+                          <span className="text-yellow-400">→</span>
+                          <span className="text-green-300 flex items-center gap-2">
                             <TrendingUp size={16} />
                             {waiver.playerIn}
                           </span>
                         </div>
-                        <p className="text-gray-600 text-xs mt-2">{new Date(waiver.date).toLocaleDateString()}</p>
+                        <p className="text-yellow-200 text-xs mt-2">{new Date(waiver.date).toLocaleDateString()}</p>
                       </div>
                       <button
                         onClick={() => deleteWaiver(waiver.id)}
-                        className="px-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-red-400 text-sm font-semibold"
+                        className="px-4 py-2 bg-red-800 border-2 border-red-600 rounded-lg text-red-300 text-sm font-semibold hover:bg-red-700"
                       >
                         Delete
                       </button>
