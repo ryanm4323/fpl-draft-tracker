@@ -101,9 +101,20 @@
       const [leagueData, setLeagueData] = useState(null);
       const [standings, setStandings] = useState([]);
       const [waivers, setWaivers] = useState([]);
+      const [allTransactions, setAllTransactions] = useState([]);
+      const [transferAnalysis, setTransferAnalysis] = useState(null);
+      const [analysisLoading, setAnalysisLoading] = useState(false);
+      const [analysisProgress, setAnalysisProgress] = useState('');
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
       const [lastUpdated, setLastUpdated] = useState(null);
+      
+      const [waiverForm, setWaiverForm] = useState({
+        manager: '',
+        playerOut: '',
+        playerIn: '',
+        gameweek: '',
+      });
 
       useEffect(() => {
         const authStatus = localStorage.getItem('fpl-draft-auth');
@@ -189,6 +200,12 @@
             setStandings(standingsWithPoints.sort((a, b) => (b.total || 0) - (a.total || 0)));
           }
 
+          // Fetch all team transactions for waiver analysis
+          console.log('Fetching transactions for all teams...');
+          if (league.league_entries) {
+            await fetchAllTransactions(league.league_entries, apiBase);
+          }
+
           setLastUpdated(new Date());
           loadWaivers();
         } catch (err) {
@@ -196,6 +213,202 @@
           console.error('Error fetching data:', err);
         } finally {
           setLoading(false);
+        }
+      };
+
+      const fetchAllTransactions = async (leagueEntries, apiBase) => {
+        const transactionsData = [];
+        
+        for (const entry of leagueEntries) {
+          try {
+            const transResponse = await fetch(`${apiBase}/api/draft/entry/${entry.entry_id}/transactions`);
+            if (transResponse.ok) {
+              const transactions = await transResponse.json();
+              console.log(`Transactions for ${entry.entry_name}:`, transactions);
+              
+              // Add team info to each transaction
+              if (transactions.transactions) {
+                transactions.transactions.forEach(t => {
+                  transactionsData.push({
+                    ...t,
+                    team_name: entry.entry_name,
+                    team_id: entry.entry_id
+                  });
+                });
+              }
+            }
+          } catch (e) {
+            console.log(`Could not fetch transactions for ${entry.entry_name}:`, e);
+          }
+        }
+        
+        console.log('All transactions collected:', transactionsData);
+        setAllTransactions(transactionsData);
+        
+        // After fetching transactions, check cache and analyze if needed
+        await analyzeTransfersWithCache(transactionsData, apiBase);
+      };
+
+      const analyzeTransfersWithCache = async (transactions, apiBase) => {
+        try {
+          // Check if we have cached analysis
+          const cached = await window.storage.get('transfer-analysis-cache', true);
+          
+          if (cached && cached.value) {
+            const cachedData = JSON.parse(cached.value);
+            // Check if cache is still valid (same gameweek)
+            const currentGW = leagueData?.current_event || 1;
+            if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 3600000) {
+              console.log('Using cached transfer analysis');
+              setTransferAnalysis(cachedData.analysis);
+              return;
+            }
+          }
+          
+          // No valid cache - run analysis
+          console.log('Running fresh transfer analysis...');
+          await runTransferAnalysis(transactions, apiBase);
+        } catch (err) {
+          console.error('Cache check failed, running fresh analysis:', err);
+          await runTransferAnalysis(transactions, apiBase);
+        }
+      };
+
+      const runTransferAnalysis = async (transactions, apiBase) => {
+        setAnalysisLoading(true);
+        setAnalysisProgress('Step 1/4: Fetching player data...');
+        
+        try {
+          // Step 1: Get all player data
+          const bootstrapResponse = await fetch(`${apiBase}/api/bootstrap-static`);
+          if (!bootstrapResponse.ok) throw new Error('Failed to fetch player data');
+          const bootstrap = await bootstrapResponse.json();
+          const players = bootstrap.elements || [];
+          
+          // Create player lookup
+          const playerLookup = {};
+          players.forEach(p => {
+            playerLookup[p.id] = {
+              name: p.web_name,
+              team: p.team,
+              position: p.element_type
+            };
+          });
+          
+          setAnalysisProgress('Step 2/4: Fetching gameweek data...');
+          
+          // Step 2: Get current gameweek
+          const currentGW = bootstrap.events?.find(e => e.is_current)?.id || 
+                           bootstrap.events?.find(e => e.finished)?.id || 1;
+          
+          // Step 3: Fetch player points for each completed gameweek
+          setAnalysisProgress(`Step 3/4: Analyzing ${currentGW} gameweeks...`);
+          const playerPoints = {}; // { player_id: { gw1: points, gw2: points, ... } }
+          
+          for (let gw = 1; gw <= currentGW; gw++) {
+            try {
+              const liveResponse = await fetch(`${apiBase}/api/event/${gw}/live`);
+              if (liveResponse.ok) {
+                const liveData = await liveResponse.json();
+                if (liveData.elements) {
+                  liveData.elements.forEach(el => {
+                    if (!playerPoints[el.id]) playerPoints[el.id] = {};
+                    playerPoints[el.id][gw] = el.stats?.total_points || 0;
+                  });
+                }
+              }
+            } catch (e) {
+              console.log(`Could not fetch GW${gw} data:`, e);
+            }
+          }
+          
+          setAnalysisProgress('Step 4/4: Calculating transfer values...');
+          
+          // Step 4: Analyze each transfer
+          const transferResults = [];
+          
+          transactions.forEach(trans => {
+            if (trans.kind !== 'w' || !trans.element_in || !trans.element_out) return;
+            
+            const gwMade = trans.event;
+            const playerIn = playerLookup[trans.element_in];
+            const playerOut = playerLookup[trans.element_out];
+            
+            if (!playerIn || !playerOut) return;
+            
+            // Find when this ownership period ended (next transfer or season end)
+            let gwEnd = currentGW;
+            const nextTransfer = transactions.find(t => 
+              t.team_id === trans.team_id && 
+              t.event > gwMade &&
+              (t.element_out === trans.element_in || t.element_in === trans.element_out)
+            );
+            if (nextTransfer) gwEnd = nextTransfer.event - 1;
+            
+            // Calculate points during ownership period
+            let pointsIn = 0;
+            let pointsOut = 0;
+            let gwCount = 0;
+            
+            for (let gw = gwMade; gw <= gwEnd; gw++) {
+              pointsIn += playerPoints[trans.element_in]?.[gw] || 0;
+              pointsOut += playerPoints[trans.element_out]?.[gw] || 0;
+              gwCount++;
+            }
+            
+            const netPoints = pointsIn - pointsOut;
+            const perGW = gwCount > 0 ? netPoints / gwCount : 0;
+            
+            transferResults.push({
+              team_name: trans.team_name,
+              team_id: trans.team_id,
+              gameweek: gwMade,
+              player_in: playerIn.name,
+              player_out: playerOut.name,
+              points_in: pointsIn,
+              points_out: pointsOut,
+              net_points: netPoints,
+              per_gw: perGW,
+              gw_count: gwCount,
+              gw_start: gwMade,
+              gw_end: gwEnd
+            });
+          });
+          
+          // Sort for leaderboards
+          const bestTotal = [...transferResults].sort((a, b) => b.net_points - a.net_points).slice(0, 10);
+          const worstTotal = [...transferResults].sort((a, b) => a.net_points - b.net_points).slice(0, 10);
+          const bestPerGW = [...transferResults].sort((a, b) => b.per_gw - a.per_gw).slice(0, 10);
+          const worstPerGW = [...transferResults].sort((a, b) => a.per_gw - b.per_gw).slice(0, 10);
+          
+          const analysis = {
+            bestTotal,
+            worstTotal,
+            bestPerGW,
+            worstPerGW,
+            allTransfers: transferResults
+          };
+          
+          setTransferAnalysis(analysis);
+          
+          // Cache the results
+          try {
+            await window.storage.set('transfer-analysis-cache', JSON.stringify({
+              gameweek: currentGW,
+              timestamp: Date.now(),
+              analysis
+            }), true);
+            console.log('Analysis cached successfully');
+          } catch (e) {
+            console.log('Failed to cache analysis:', e);
+          }
+          
+          setAnalysisProgress('Complete! 🍔');
+        } catch (err) {
+          console.error('Analysis failed:', err);
+          setError('Failed to analyze transfers: ' + err.message);
+        } finally {
+          setAnalysisLoading(false);
         }
       };
 
@@ -611,6 +824,182 @@
                       </button>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Transfer Analysis Loading */}
+            {analysisLoading && (
+              <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 shadow-2xl mt-8">
+                <h2 className="text-3xl font-bold text-yellow-300 mb-6 flex items-center gap-3">
+                  🔄 Analyzing Transfers...
+                </h2>
+                <div className="text-center">
+                  <div className="text-6xl mb-4 animate-bounce">🍔</div>
+                  <p className="text-yellow-100 text-xl font-bold">{analysisProgress}</p>
+                  <p className="text-yellow-200 text-sm mt-2">This may take 30-60 seconds...</p>
+                </div>
+              </div>
+            )}
+
+            {/* Transfer Analysis Leaderboards */}
+            {transferAnalysis && !analysisLoading && (
+              <div className="space-y-8 mt-8">
+                {/* Best Transfers - Total Points */}
+                <div className="bg-gradient-to-br from-green-700 to-green-500 p-8 rounded-3xl border-4 border-green-400 shadow-2xl">
+                  <h2 className="text-3xl font-bold text-white mb-6 flex items-center gap-3">
+                    🏆 BEST TRANSFERS - Total Points
+                  </h2>
+                  <p className="text-green-100 mb-4">The masterstrokes that changed seasons</p>
+                  <div className="space-y-3">
+                    {transferAnalysis.bestTotal.map((t, idx) => (
+                      <div key={idx} className="bg-green-900 bg-opacity-50 p-5 rounded-xl border-2 border-green-400">
+                        <div className="flex justify-between items-start flex-wrap gap-3">
+                          <div className="flex-1">
+                            <p className="text-xl font-bold text-green-300">#{idx + 1} - {t.team_name}</p>
+                            <p className="text-green-100 text-sm mb-2">GW{t.gameweek} (tracked {t.gw_count} gameweeks)</p>
+                            <div className="flex items-center gap-2 text-white">
+                              <span className="line-through text-red-300">{t.player_out}</span>
+                              <span>→</span>
+                              <span className="font-bold text-green-300">{t.player_in}</span>
+                            </div>
+                            <p className="text-sm text-green-200 mt-2">
+                              {t.player_in}: {t.points_in} pts • {t.player_out}: {t.points_out} pts
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-4xl font-black text-green-300">+{t.net_points}</p>
+                            <p className="text-sm text-green-200">+{t.per_gw.toFixed(1)} per GW</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Worst Transfers - Total Points */}
+                <div className="bg-gradient-to-br from-red-700 to-red-500 p-8 rounded-3xl border-4 border-red-400 shadow-2xl">
+                  <h2 className="text-3xl font-bold text-yellow-300 mb-6 flex items-center gap-3">
+                    💀 WORST TRANSFERS - Total Points
+                  </h2>
+                  <p className="text-red-100 mb-4">The disasters that haunt your dreams</p>
+                  <div className="space-y-3">
+                    {transferAnalysis.worstTotal.map((t, idx) => (
+                      <div key={idx} className={`bg-red-900 bg-opacity-50 p-5 rounded-xl border-2 ${idx === 0 ? 'border-yellow-400 shadow-lg' : 'border-red-400'}`}>
+                        <div className="flex justify-between items-start flex-wrap gap-3">
+                          <div className="flex-1">
+                            <p className="text-xl font-bold text-yellow-300">#{idx + 1} - {t.team_name} {idx === 0 && '💀'}</p>
+                            <p className="text-red-100 text-sm mb-2">GW{t.gameweek} (tracked {t.gw_count} gameweeks)</p>
+                            <div className="flex items-center gap-2 text-white">
+                              <span className="font-bold text-yellow-300">{t.player_out}</span>
+                              <span>→</span>
+                              <span className="line-through text-red-300">{t.player_in}</span>
+                            </div>
+                            <p className="text-sm text-red-200 mt-2">
+                              {t.player_in}: {t.points_in} pts • {t.player_out}: {t.points_out} pts
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-4xl font-black text-red-300">{t.net_points}</p>
+                            <p className="text-sm text-red-200">{t.per_gw.toFixed(1)} per GW</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Best Transfers - Per Gameweek */}
+                <div className="bg-gradient-to-br from-blue-700 to-blue-500 p-8 rounded-3xl border-4 border-blue-400 shadow-2xl">
+                  <h2 className="text-3xl font-bold text-white mb-6 flex items-center gap-3">
+                    📊 BEST TRANSFERS - Per Gameweek
+                  </h2>
+                  <p className="text-blue-100 mb-4">The smartest decisions (quality over quantity)</p>
+                  <div className="space-y-3">
+                    {transferAnalysis.bestPerGW.map((t, idx) => (
+                      <div key={idx} className="bg-blue-900 bg-opacity-50 p-5 rounded-xl border-2 border-blue-400">
+                        <div className="flex justify-between items-start flex-wrap gap-3">
+                          <div className="flex-1">
+                            <p className="text-xl font-bold text-blue-300">#{idx + 1} - {t.team_name}</p>
+                            <p className="text-blue-100 text-sm mb-2">GW{t.gameweek} ({t.gw_count} gameweeks tracked)</p>
+                            <div className="flex items-center gap-2 text-white">
+                              <span className="line-through text-red-300">{t.player_out}</span>
+                              <span>→</span>
+                              <span className="font-bold text-blue-300">{t.player_in}</span>
+                            </div>
+                            <p className="text-sm text-blue-200 mt-2">
+                              Total impact: +{t.net_points} points
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-4xl font-black text-blue-300">+{t.per_gw.toFixed(1)}</p>
+                            <p className="text-sm text-blue-200">per GW</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Worst Transfers - Per Gameweek */}
+                <div className="bg-gradient-to-br from-purple-700 to-purple-500 p-8 rounded-3xl border-4 border-purple-400 shadow-2xl">
+                  <h2 className="text-3xl font-bold text-yellow-300 mb-6 flex items-center gap-3">
+                    🤦 WORST TRANSFERS - Per Gameweek
+                  </h2>
+                  <p className="text-purple-100 mb-4">The dumbest decisions (efficiency of failure)</p>
+                  <div className="space-y-3">
+                    {transferAnalysis.worstPerGW.map((t, idx) => (
+                      <div key={idx} className={`bg-purple-900 bg-opacity-50 p-5 rounded-xl border-2 ${idx === 0 ? 'border-yellow-400 shadow-lg' : 'border-purple-400'}`}>
+                        <div className="flex justify-between items-start flex-wrap gap-3">
+                          <div className="flex-1">
+                            <p className="text-xl font-bold text-yellow-300">#{idx + 1} - {t.team_name} {idx === 0 && '🤡'}</p>
+                            <p className="text-purple-100 text-sm mb-2">GW{t.gameweek} ({t.gw_count} gameweeks tracked)</p>
+                            <div className="flex items-center gap-2 text-white">
+                              <span className="font-bold text-yellow-300">{t.player_out}</span>
+                              <span>→</span>
+                              <span className="line-through text-red-300">{t.player_in}</span>
+                            </div>
+                            <p className="text-sm text-purple-200 mt-2">
+                              Total damage: {t.net_points} points
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-4xl font-black text-purple-300">{t.per_gw.toFixed(1)}</p>
+                            <p className="text-sm text-purple-200">per GW</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Summary Stats */}
+                <div className="bg-gradient-to-br from-gray-700 to-gray-600 p-8 rounded-3xl border-4 border-gray-500 shadow-2xl">
+                  <h2 className="text-3xl font-bold text-white mb-6">📈 Transfer Database Stats</h2>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-gray-800 p-4 rounded-xl text-center">
+                      <p className="text-4xl font-black text-yellow-400">{transferAnalysis.allTransfers.length}</p>
+                      <p className="text-gray-300 text-sm">Total Transfers</p>
+                    </div>
+                    <div className="bg-gray-800 p-4 rounded-xl text-center">
+                      <p className="text-4xl font-black text-green-400">
+                        {transferAnalysis.allTransfers.filter(t => t.net_points > 0).length}
+                      </p>
+                      <p className="text-gray-300 text-sm">Good Transfers</p>
+                    </div>
+                    <div className="bg-gray-800 p-4 rounded-xl text-center">
+                      <p className="text-4xl font-black text-red-400">
+                        {transferAnalysis.allTransfers.filter(t => t.net_points < 0).length}
+                      </p>
+                      <p className="text-gray-300 text-sm">Bad Transfers</p>
+                    </div>
+                    <div className="bg-gray-800 p-4 rounded-xl text-center">
+                      <p className="text-4xl font-black text-yellow-400">
+                        {(transferAnalysis.allTransfers.reduce((sum, t) => sum + Math.abs(t.net_points), 0) / transferAnalysis.allTransfers.length).toFixed(1)}
+                      </p>
+                      <p className="text-gray-300 text-sm">Avg Impact</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
