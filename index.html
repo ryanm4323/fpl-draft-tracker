@@ -4,112 +4,114 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Spreadsheet Merchants 3.0 - FPL Draft Tracker</title>
-  <!-- 
-    NETLIFY CREDIT OPTIMIZATIONS:
-    - 24-hour cache on all data (transfer analysis, position history, standings)
-    - Lazy loading for position history (only on scroll/view)
-    - 50ms delay between API requests to avoid rate limiting
-    - Reduced console logging (every 5th gameweek only)
-    - Manual refresh button instead of auto-refresh
-    - Expected reduction: ~95% fewer function calls vs hourly refresh
-  -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    
+    * {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    
+    body {
+      background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+      min-height: 100vh;
+    }
+    
+    .glass-card {
+      background: rgba(255, 255, 255, 0.03);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .danger-overlay {
+      background: linear-gradient(90deg, rgba(220, 38, 38, 0.15) 0%, rgba(220, 38, 38, 0.05) 100%);
+    }
+    
+    .position-line {
+      transition: stroke-width 0.2s, opacity 0.2s;
+    }
+    
+    .position-line:hover {
+      stroke-width: 4 !important;
+      opacity: 1 !important;
+    }
+    
+    .team-legend-item:hover .position-line {
+      stroke-width: 4 !important;
+      opacity: 1 !important;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .fade-in {
+      animation: fadeIn 0.5s ease-out;
+    }
+    
+    .tooltip {
+      position: absolute;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 1000;
+    }
+  </style>
 </head>
-<body>
+<body class="antialiased">
   <div id="root"></div>
   
   <script type="text/babel">
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useRef } = React;
     
-    // Lucide icons as simple components
-    const Lock = ({ size = 24, className = "" }) => (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
-        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-      </svg>
-    );
-    
-    const Settings = ({ size = 24 }) => (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3"/>
-      </svg>
-    );
-    
-    const RefreshCw = ({ size = 24, className = "" }) => (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    // Modern icon components
+    const RefreshCw = ({ size = 20, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className}>
         <polyline points="23 4 23 10 17 10"/>
         <polyline points="1 20 1 14 7 14"/>
         <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
       </svg>
     );
     
-    const Users = ({ size = 24 }) => (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-        <circle cx="9" cy="7" r="4"/>
-        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    const Settings = ({ size = 20 }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M12 1v6m0 6v6"/>
+        <path d="M12 12h9M3 12h9"/>
       </svg>
     );
     
-    const Trophy = ({ size = 24, className = "" }) => (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
-        <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/>
-        <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/>
-        <path d="M4 22h16"/>
-        <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/>
-        <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/>
-        <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>
-      </svg>
-    );
-    
-    const History = ({ size = 24 }) => (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M3 3v5h5"/>
-        <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/>
-        <path d="M12 7v5l4 2"/>
-      </svg>
-    );
-    
-    const TrendingUp = ({ size = 24 }) => (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    const TrendingUp = ({ size = 20 }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
         <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
         <polyline points="17 6 23 6 23 12"/>
       </svg>
     );
     
-    const TrendingDown = ({ size = 24 }) => (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/>
-        <polyline points="17 18 23 18 23 12"/>
-      </svg>
-    );
-    
-    const AlertCircle = ({ size = 24, className = "" }) => (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
-        <circle cx="12" cy="12" r="10"/>
-        <line x1="12" y1="8" x2="12" y2="12"/>
-        <line x1="12" y1="16" x2="12.01" y2="16"/>
+    const Lock = ({ size = 20 }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
       </svg>
     );
 
-    function FPLDraftTracker() {
+    function App() {
       const [config, setConfig] = useState({
-        leagueId: "81877",
-        leagueName: "Spreadsheet Merchants 3.0",
-        password: "merchants2026",
+        leagueId: '10991',
+        userTeamId: '81877',
+        password: 'merchants2026',
+        leagueName: 'Spreadsheet Merchants 3.0'
       });
-
+      
       const [isAuthenticated, setIsAuthenticated] = useState(false);
       const [passwordInput, setPasswordInput] = useState('');
       const [showConfig, setShowConfig] = useState(false);
       const [leagueData, setLeagueData] = useState(null);
       const [standings, setStandings] = useState([]);
-      const [waivers, setWaivers] = useState([]);
       const [allTransactions, setAllTransactions] = useState([]);
       const [transferAnalysis, setTransferAnalysis] = useState(null);
       const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -118,111 +120,72 @@
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
       const [lastUpdated, setLastUpdated] = useState(null);
+      const [hoveredTeam, setHoveredTeam] = useState(null);
       
-      const [waiverForm, setWaiverForm] = useState({
-        manager: '',
-        playerOut: '',
-        playerIn: '',
-        gameweek: '',
-      });
+      const svgRef = useRef(null);
 
       useEffect(() => {
-        const authStatus = localStorage.getItem('fpl-draft-auth');
-        if (authStatus === 'true') {
+        const saved = localStorage.getItem('fpl-config');
+        if (saved) {
+          setConfig(JSON.parse(saved));
+        }
+        const auth = localStorage.getItem('fpl-auth');
+        if (auth === 'true') {
           setIsAuthenticated(true);
         }
       }, []);
 
-      const handlePasswordSubmit = (e) => {
-        e.preventDefault();
+      useEffect(() => {
+        if (isAuthenticated && config.leagueId) {
+          fetchLeagueData();
+        }
+      }, [isAuthenticated]);
+
+      const handleLogin = () => {
         if (passwordInput === config.password) {
           setIsAuthenticated(true);
-          localStorage.setItem('fpl-draft-auth', 'true');
-          setPasswordInput('');
+          localStorage.setItem('fpl-auth', 'true');
         } else {
-          alert('Incorrect password!');
-          setPasswordInput('');
+          alert('Incorrect password');
         }
       };
 
       const fetchLeagueData = async () => {
-        if (!config.leagueId) {
-          setError('Please configure your League ID in the settings');
-          return;
-        }
-
         setLoading(true);
         setError(null);
-
+        
         try {
           const apiBase = '/.netlify/functions/fpl-proxy?endpoint=';
           
-          const entryResponse = await fetch(`${apiBase}/api/entry/${config.leagueId}/public`);
-          if (!entryResponse.ok) {
-            const errorData = await entryResponse.json();
-            throw new Error(`Failed to fetch entry data: ${errorData.error || entryResponse.status}`);
-          }
-          const entryData = await entryResponse.json();
-          
-          console.log('Entry data:', entryData);
-          
-          // Extract league ID from entry data - it's in league_set array
-          const actualLeagueId = entryData.entry?.league_set?.[0] || entryData.league_set?.[0];
-          
-          if (!actualLeagueId) {
-            throw new Error('Could not find league ID in entry data. Data: ' + JSON.stringify(entryData));
-          }
-          
-          console.log('Found league ID:', actualLeagueId);
-          
-          const leagueResponse = await fetch(`${apiBase}/api/league/${actualLeagueId}/details`);
+          const leagueResponse = await fetch(`${apiBase}/api/league/${config.leagueId}/details`);
           if (!leagueResponse.ok) {
-            const errorData = await leagueResponse.json();
-            throw new Error(`Failed to fetch league details: ${errorData.error || leagueResponse.status}`);
+            throw new Error(`Failed to fetch league details`);
           }
           const league = await leagueResponse.json();
           
-          console.log('League data:', league);
           setLeagueData(league);
 
-          // Match standings with league_entries to get full team info
           if (league.standings && league.league_entries) {
             const standingsWithDetails = league.standings.map(standing => {
-              // Find the matching league entry
               const entry = league.league_entries.find(e => e.id === standing.league_entry);
               return {
                 ...standing,
                 entry_id: entry?.entry_id,
                 entry_name: entry?.entry_name || `${entry?.player_first_name || ''} ${entry?.player_last_name || ''}`.trim(),
                 player_name: `${entry?.player_first_name || ''} ${entry?.player_last_name || ''}`.trim(),
+                player_first_name: entry?.player_first_name || '',
+                player_last_name: entry?.player_last_name || ''
               };
             });
-            // Sort by rank (already sorted, but just to be sure)
             setStandings(standingsWithDetails.sort((a, b) => a.rank - b.rank));
-          } else if (league.league_entries) {
-            // Fallback if standings don't exist
-            const standingsWithPoints = league.league_entries.map(entry => ({
-              ...entry,
-              total: entry.total || 0,
-              event_total: entry.event_total || 0,
-              entry_name: entry.entry_name || `${entry.player_first_name || ''} ${entry.player_last_name || ''}`.trim()
-            }));
-            setStandings(standingsWithPoints.sort((a, b) => (b.total || 0) - (a.total || 0)));
           }
           
-          // Build position history for all teams across all gameweeks (always run)
           if (league.league_entries) {
             await buildPositionHistory(league.league_entries, apiBase, league);
-          }
-
-          // Fetch all team transactions for waiver analysis
-          console.log('Fetching transactions for all teams...');
-          if (league.league_entries) {
             await fetchAllTransactions(league.league_entries, apiBase, league);
           }
 
           setLastUpdated(new Date());
-          loadWaivers();
         } catch (err) {
           setError(err.message);
           console.error('Error fetching data:', err);
@@ -232,112 +195,78 @@
       };
 
       const buildPositionHistory = async (leagueEntries, apiBase, league) => {
-        console.log('🔵 buildPositionHistory called with:', leagueEntries?.length, 'teams');
         try {
-          console.log('🔵 League param:', league);
-          
-          // Get current GW - try multiple paths
           const currentGW = league?.league?.current_event || 22;
-          console.log('🔵 Current GW:', currentGW);
-          
-          // CLEAR BAD CACHE if it has 0 entries
           const cached = localStorage.getItem('position-history-cache');
           
           if (cached) {
-            console.log('🔵 Found cache, checking validity...');
             const cachedData = JSON.parse(cached);
-            
-            // If cache has 0 entries, it's broken - delete it
             if (cachedData.history && cachedData.history.length === 0) {
-              console.log('❌ Cache has 0 entries, deleting...');
               localStorage.removeItem('position-history-cache');
-            } else {
-              console.log('🔵 Cached GW:', cachedData.gameweek, 'Current GW:', currentGW);
-              console.log('🔵 Cache age:', Math.round((Date.now() - cachedData.timestamp) / 3600000), 'hours');
-              if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 86400000) {
-                console.log('✅ Using cached position history:', cachedData.history.length, 'entries');
-                setPositionHistory(cachedData.history);
-                return;
-              }
-              console.log('❌ Cache invalid, rebuilding...');
+            } else if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 86400000) {
+              setPositionHistory(cachedData.history);
+              return;
             }
-          } else {
-            console.log('🔵 No cache found, building from scratch...');
           }
           
-          console.log('🔵 Fetching individual team histories...');
           const history = [];
-          
-          // Fetch history for each team
           const teamHistories = [];
           
           for (const entry of leagueEntries) {
             try {
               const response = await fetch(`${apiBase}/api/entry/${entry.entry_id}/history`);
-              if (!response.ok) {
-                console.log(`❌ Failed to fetch history for team ${entry.entry_id}`);
-                continue;
-              }
+              if (!response.ok) continue;
               
               const data = await response.json();
               teamHistories.push({
                 entry_id: entry.entry_id,
                 entry_name: entry.entry_name,
+                player_first_name: entry.player_first_name,
+                player_last_name: entry.player_last_name,
                 history: data.history || []
               });
               
-              // Small delay to avoid rate limiting
               await new Promise(resolve => setTimeout(resolve, 100));
-              
             } catch (e) {
-              console.log(`❌ Error fetching team ${entry.entry_id}:`, e);
+              console.log(`Error fetching team ${entry.entry_id}:`, e);
             }
           }
           
-          console.log(`🔵 Fetched ${teamHistories.length} team histories`);
-          
-          if (teamHistories.length === 0) {
-            console.log('❌ No team histories available');
-            return;
-          }
-          
-          // For each gameweek, rank all teams by their total_points at that GW
           for (let gw = 1; gw <= currentGW; gw++) {
             const gwStandings = [];
             
             teamHistories.forEach(team => {
-              // Find this team's score at this gameweek
               const gwData = team.history.find(h => h.event === gw);
               
               if (gwData) {
                 gwStandings.push({
                   entry_id: team.entry_id,
                   entry_name: team.entry_name,
+                  player_first_name: team.player_first_name,
+                  player_last_name: team.player_last_name,
                   total_points: gwData.total_points,
                   gw_points: gwData.points
                 });
               }
             });
             
-            // Sort by total_points descending (highest first)
             gwStandings.sort((a, b) => b.total_points - a.total_points);
             
-            // Assign positions
             gwStandings.forEach((team, index) => {
               history.push({
                 gameweek: gw,
                 entry_id: team.entry_id,
                 entry_name: team.entry_name,
+                player_first_name: team.player_first_name,
+                player_last_name: team.player_last_name,
                 position: index + 1,
                 points: team.total_points
               });
             });
           }
           
-          console.log('✅ Position history built:', history.length, 'entries');
           setPositionHistory(history);
           
-          // Cache the results
           localStorage.setItem('position-history-cache', JSON.stringify({
             gameweek: currentGW,
             timestamp: Date.now(),
@@ -345,598 +274,540 @@
           }));
           
         } catch (e) {
-          console.log('❌ Error building position history:', e);
-          console.error(e);
+          console.log('Error building position history:', e);
         }
       };
 
       const fetchAllTransactions = async (leagueEntries, apiBase, league) => {
-        const transactionsData = [];
-        
-        try {
-          // Get league ID from the passed league data
-          const leagueId = league?.league?.id;
-          console.log('League data available:', league);
-          console.log('Extracted league ID:', leagueId);
-          
-          if (!leagueId) {
-            console.log('ERROR: No league ID found in league');
-            console.log('Full league object:', JSON.stringify(league));
-            return;
-          }
-          
-          console.log(`Fetching all transactions for league ${leagueId}...`);
-          const transUrl = `${apiBase}/api/draft/league/${leagueId}/transactions`;
-          console.log('Fetching from URL:', transUrl);
-          
-          const transResponse = await fetch(transUrl);
-          console.log('Transaction response status:', transResponse.status);
-          
-          if (transResponse.ok) {
-            const transactions = await transResponse.json();
-            console.log('Raw league transactions response:', transactions);
-            console.log('Transaction keys:', Object.keys(transactions));
-            
-            // Try different possible structures
-            let transactionList = transactions.transactions || 
-                                 transactions.results || 
-                                 transactions.waivers ||
-                                 (Array.isArray(transactions) ? transactions : []);
-            
-            console.log('Transaction list type:', typeof transactionList);
-            console.log('Is array?', Array.isArray(transactionList));
-            console.log('Transaction list length:', transactionList?.length);
-            console.log('First transaction:', transactionList?.[0]);
-            
-            if (Array.isArray(transactionList) && transactionList.length > 0) {
-              console.log(`Found ${transactionList.length} transactions for entire league`);
-              
-              // Match each transaction to a team name
-              transactionList.forEach(t => {
-                const entry = leagueEntries.find(e => e.entry_id === t.entry);
-                transactionsData.push({
-                  ...t,
-                  team_name: entry?.entry_name || 'Unknown Team',
-                  team_id: t.entry
-                });
-              });
-            } else {
-              console.log('WARNING: No transactions found in response or not an array');
-            }
-          } else {
-            console.log(`ERROR: Failed to fetch league transactions: ${transResponse.status}`);
-            const errorText = await transResponse.text();
-            console.log('Error response:', errorText);
-          }
-        } catch (e) {
-          console.log('ERROR: Exception fetching league transactions:', e);
-          console.error(e);
-        }
-        
-        console.log('Final transactions collected:', transactionsData.length, 'transactions');
-        console.log('Sample transactions:', transactionsData.slice(0, 3));
-        setAllTransactions(transactionsData);
-        
-        // After fetching transactions, check cache and analyze if needed
-        if (transactionsData.length > 0) {
-          await analyzeTransfersWithCache(transactionsData, apiBase);
-        } else {
-          console.log('No transactions to analyze - skipping transfer analysis');
-        }
-      };
+        const leagueId = league?.league?.id;
+        if (!leagueId) return;
 
-      const analyzeTransfersWithCache = async (transactions, apiBase) => {
         try {
-          // Check if we have cached analysis in localStorage
+          const response = await fetch(`${apiBase}/api/draft/league/${leagueId}/transactions`);
+          if (!response.ok) return;
+          
+          const data = await response.json();
+          const transactions = data.transactions || [];
+          
+          setAllTransactions(transactions);
+          
           const cached = localStorage.getItem('transfer-analysis-cache');
           
           if (cached) {
             const cachedData = JSON.parse(cached);
-            // Check if cache is still valid (same gameweek and less than 24 hours old)
             const currentGW = leagueData?.current_event || 1;
             if (cachedData.gameweek === currentGW && cachedData.timestamp > Date.now() - 86400000) {
-              console.log('Using cached transfer analysis');
               setTransferAnalysis(cachedData.analysis);
               return;
             }
           }
           
-          // No valid cache - run analysis
-          console.log('Running fresh transfer analysis...');
-          await runTransferAnalysis(transactions, apiBase);
-        } catch (err) {
-          console.error('Cache check failed, running fresh analysis:', err);
-          await runTransferAnalysis(transactions, apiBase);
+          await analyzeTransfers(transactions, leagueEntries, apiBase, leagueId);
+        } catch (e) {
+          console.log('Error fetching transactions:', e);
         }
       };
 
-      const runTransferAnalysis = async (transactions, apiBase) => {
+      const analyzeTransfers = async (transactions, leagueEntries, apiBase, leagueId) => {
         setAnalysisLoading(true);
-        setAnalysisProgress('Step 1/4: Fetching player data...');
         
         try {
-          // Step 1: Get all player data
-          const bootstrapResponse = await fetch(`${apiBase}/api/bootstrap-static`);
-          if (!bootstrapResponse.ok) throw new Error('Failed to fetch player data');
-          const bootstrap = await bootstrapResponse.json();
-          const players = bootstrap.elements || [];
+          setAnalysisProgress('Fetching player data...');
           
-          // Create player lookup
-          const playerLookup = {};
-          players.forEach(p => {
-            playerLookup[p.id] = {
+          const bootstrapResponse = await fetch(`${apiBase}/api/bootstrap-static`);
+          const bootstrapData = await bootstrapResponse.json();
+          
+          const players = {};
+          bootstrapData.elements.forEach(p => {
+            players[p.id] = {
               name: p.web_name,
               team: p.team,
               position: p.element_type
             };
           });
           
-          setAnalysisProgress('Step 2/4: Fetching gameweek data...');
+          setAnalysisProgress('Analyzing transfers...');
           
-          // Step 2: Get current gameweek from league data or bootstrap
-          let currentGW = 1;
-          
-          // Try to get from league standings data first (most reliable)
-          if (standings && standings.length > 0 && standings[0].event_total !== undefined) {
-            // Find the highest gameweek from transactions
-            const maxTransactionGW = Math.max(...transactions.map(t => t.event || 0));
-            currentGW = Math.max(maxTransactionGW, 1);
-          }
-          
-          // Fallback to bootstrap data
-          if (currentGW === 1 && bootstrap.events && Array.isArray(bootstrap.events)) {
-            const finishedEvents = bootstrap.events.filter(e => e.finished);
-            if (finishedEvents.length > 0) {
-              currentGW = Math.max(...finishedEvents.map(e => e.id));
-            }
-          }
-          
-          // Fallback to direct properties
-          if (currentGW === 1) {
-            currentGW = bootstrap.current_event || leagueData?.current_event || 22; // Default to 22 if nothing works
-          }
-          
-          console.log('Current gameweek:', currentGW);
-          
-          // Step 3: Fetch player points for each completed gameweek
-          setAnalysisProgress(`Step 3/4: Analyzing ${currentGW} gameweeks...`);
-          const playerPoints = {}; // { player_id: { gw1: points, gw2: points, ... } }
-          
-          for (let gw = 1; gw <= currentGW; gw++) {
-            try {
-              const liveResponse = await fetch(`${apiBase}/api/event/${gw}/live`);
-              if (liveResponse.ok) {
-                const liveData = await liveResponse.json();
-                
-                // Handle different API response structures
-                const elements = liveData.elements || liveData;
-                
-                if (Array.isArray(elements)) {
-                  elements.forEach(el => {
-                    if (!playerPoints[el.id]) playerPoints[el.id] = {};
-                    playerPoints[el.id][gw] = el.stats?.total_points || 0;
-                  });
-                } else if (typeof elements === 'object') {
-                  // Elements might be an object with player IDs as keys
-                  Object.keys(elements).forEach(id => {
-                    const el = elements[id];
-                    if (!playerPoints[id]) playerPoints[id] = {};
-                    playerPoints[id][gw] = el.stats?.total_points || 0;
-                  });
-                }
-              }
-            } catch (e) {
-              console.log(`Could not fetch GW${gw} data:`, e);
-            }
-          }
-          
-          setAnalysisProgress('Step 4/4: Calculating transfer values...');
-          
-          // Step 4: Analyze each transfer
-          const transferResults = [];
-          
-          transactions.forEach(trans => {
-            // Only process accepted waivers (not free agents and not denied)
-            if (trans.kind !== 'w' || trans.result !== 'a' || !trans.element_in || !trans.element_out) return;
-            
-            const gwMade = trans.event;
-            const playerIn = playerLookup[trans.element_in];
-            const playerOut = playerLookup[trans.element_out];
-            
-            if (!playerIn || !playerOut) return;
-            
-            // Find when this ownership period ended (next transfer or season end)
-            let gwEnd = currentGW;
-            const nextTransfer = transactions.find(t => 
-              t.team_id === trans.team_id && 
-              t.event > gwMade &&
-              (t.element_out === trans.element_in || t.element_in === trans.element_out)
-            );
-            if (nextTransfer) gwEnd = nextTransfer.event - 1;
-            
-            // Calculate points during ownership period
-            let pointsIn = 0;
-            let pointsOut = 0;
-            let gwCount = 0;
-            
-            for (let gw = gwMade; gw <= gwEnd; gw++) {
-              pointsIn += playerPoints[trans.element_in]?.[gw] || 0;
-              pointsOut += playerPoints[trans.element_out]?.[gw] || 0;
-              gwCount++;
-            }
-            
-            const netPoints = pointsIn - pointsOut;
-            const perGW = gwCount > 0 ? netPoints / gwCount : 0;
-            
-            transferResults.push({
-              team_name: trans.team_name,
-              team_id: trans.team_id,
-              gameweek: gwMade,
-              player_in: playerIn.name,
-              player_out: playerOut.name,
-              points_in: pointsIn,
-              points_out: pointsOut,
-              net_points: netPoints,
-              per_gw: perGW,
-              gw_count: gwCount,
-              gw_start: gwMade,
-              gw_end: gwEnd
-            });
+          const teamImpact = {};
+          leagueEntries.forEach(entry => {
+            teamImpact[entry.entry_id] = {
+              entry_name: entry.entry_name,
+              player_name: `${entry.player_first_name} ${entry.player_last_name}`,
+              totalImpact: 0,
+              transferCount: 0,
+              transfers: []
+            };
           });
           
-          // Sort for leaderboards
-          const bestTotal = [...transferResults].sort((a, b) => b.net_points - a.net_points).slice(0, 10);
-          const worstTotal = [...transferResults].sort((a, b) => a.net_points - b.net_points).slice(0, 10);
-          const bestPerGW = [...transferResults].sort((a, b) => b.per_gw - a.per_gw).slice(0, 10);
-          const worstPerGW = [...transferResults].sort((a, b) => a.per_gw - b.per_gw).slice(0, 10);
+          const acceptedWaivers = transactions.filter(t => 
+            t.kind === 'w' && 
+            t.result === 'a' && 
+            t.element_in && 
+            t.element_out
+          );
           
-          const analysis = {
-            bestTotal,
-            worstTotal,
-            bestPerGW,
-            worstPerGW,
-            allTransfers: transferResults
-          };
+          acceptedWaivers.forEach(trans => {
+            const playerIn = players[trans.element_in];
+            const playerOut = players[trans.element_out];
+            const gwPicked = trans.event;
+            
+            if (playerIn && playerOut) {
+              teamImpact[trans.entry].transferCount++;
+              teamImpact[trans.entry].transfers.push({
+                gw: gwPicked,
+                playerIn: playerIn.name,
+                playerOut: playerOut.name
+              });
+            }
+          });
           
-          setTransferAnalysis(analysis);
+          const impactArray = Object.values(teamImpact)
+            .filter(t => t.transferCount > 0)
+            .sort((a, b) => b.totalImpact - a.totalImpact);
           
-          // Cache the results in localStorage
-          try {
-            localStorage.setItem('transfer-analysis-cache', JSON.stringify({
-              gameweek: currentGW,
-              timestamp: Date.now(),
-              analysis
-            }));
-            console.log('Analysis cached successfully');
-          } catch (e) {
-            console.log('Failed to cache analysis:', e);
-          }
+          const avgArray = impactArray
+            .map(t => ({
+              ...t,
+              avgImpact: t.transferCount > 0 ? t.totalImpact / t.transferCount : 0
+            }))
+            .sort((a, b) => b.avgImpact - a.avgImpact);
           
-          setAnalysisProgress('Complete! 🍔');
-        } catch (err) {
-          console.error('Analysis failed:', err);
-          setError('Failed to analyze transfers: ' + err.message);
+          setTransferAnalysis({
+            byTotal: impactArray,
+            byAverage: avgArray
+          });
+          
+          const currentGW = leagueData?.current_event || 1;
+          localStorage.setItem('transfer-analysis-cache', JSON.stringify({
+            gameweek: currentGW,
+            timestamp: Date.now(),
+            analysis: {
+              byTotal: impactArray,
+              byAverage: avgArray
+            }
+          }));
+          
+        } catch (e) {
+          console.error('Analysis error:', e);
         } finally {
           setAnalysisLoading(false);
+          setAnalysisProgress('');
         }
       };
 
-      const loadWaivers = async () => {
-        try {
-          const result = localStorage.getItem('draft-waivers');
-          if (result) {
-            setWaivers(JSON.parse(result));
-          }
-        } catch (err) {
-          console.log('No previous waivers found');
-        }
-      };
-
-      const saveWaivers = async (newWaivers) => {
-        try {
-          localStorage.setItem('draft-waivers', JSON.stringify(newWaivers));
-          setWaivers(newWaivers);
-        } catch (err) {
-          console.error('Error saving waivers:', err);
-        }
-      };
-
-      const addWaiver = async (managerName, playerOut, playerIn, gameweek) => {
-        const newWaiver = {
-          id: Date.now(),
-          managerName,
-          playerOut,
-          playerIn,
-          gameweek,
-          date: new Date().toISOString(),
-        };
-        const updatedWaivers = [newWaiver, ...waivers];
-        await saveWaivers(updatedWaivers);
-      };
-
-      const deleteWaiver = async (id) => {
-        const updatedWaivers = waivers.filter(w => w.id !== id);
-        await saveWaivers(updatedWaivers);
+      // Position History Chart Component
+      const PositionChart = () => {
+        if (positionHistory.length === 0) return null;
+        
+        const maxGW = Math.max(...positionHistory.map(h => h.gameweek));
+        const colors = [
+          '#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#06b6d4', '#ef4444',
+          '#ec4899', '#14b8a6', '#f97316', '#84cc16', '#a855f7', '#fb923c'
+        ];
+        
+        const chartWidth = 1000;
+        const chartHeight = 500;
+        const padding = { top: 40, right: 120, bottom: 60, left: 60 };
+        const plotWidth = chartWidth - padding.left - padding.right;
+        const plotHeight = chartHeight - padding.top - padding.bottom;
+        
+        return (
+          <div className="relative">
+            <svg 
+              ref={svgRef}
+              width="100%" 
+              height={chartHeight} 
+              viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+              className="overflow-visible"
+            >
+              {/* Background danger zones */}
+              <defs>
+                <pattern id="dangerPattern" patternUnits="userSpaceOnUse" width="4" height="4">
+                  <path d="M-1,1 l2,-2 M0,4 l4,-4 M3,5 l2,-2" stroke="#ef4444" strokeWidth="0.5" opacity="0.1"/>
+                </pattern>
+              </defs>
+              
+              {/* Danger zone backgrounds */}
+              {[7, 8, 10, 11, 12].map(pos => (
+                <rect
+                  key={pos}
+                  x={padding.left}
+                  y={padding.top + (pos - 1) * (plotHeight / 12)}
+                  width={plotWidth}
+                  height={plotHeight / 12}
+                  fill="url(#dangerPattern)"
+                  opacity="0.3"
+                />
+              ))}
+              
+              {/* Grid lines */}
+              {Array.from({length: 13}, (_, i) => i).map(pos => (
+                <g key={pos}>
+                  <line
+                    x1={padding.left}
+                    y1={padding.top + pos * (plotHeight / 12)}
+                    x2={chartWidth - padding.right}
+                    y2={padding.top + pos * (plotHeight / 12)}
+                    stroke="rgba(255, 255, 255, 0.1)"
+                    strokeWidth={pos === 0 || pos === 6 || pos === 9 || pos === 12 ? "2" : "1"}
+                  />
+                  {pos < 12 && (
+                    <text
+                      x={padding.left - 15}
+                      y={padding.top + pos * (plotHeight / 12) + (plotHeight / 24)}
+                      fill="rgba(255, 255, 255, 0.5)"
+                      fontSize="12"
+                      textAnchor="end"
+                      dominantBaseline="middle"
+                    >
+                      {pos + 1}
+                    </text>
+                  )}
+                </g>
+              ))}
+              
+              {/* Gameweek labels */}
+              {Array.from({length: maxGW}, (_, i) => i + 1).filter(gw => gw % 2 === 1).map(gw => (
+                <text
+                  key={gw}
+                  x={padding.left + ((gw - 1) / maxGW) * plotWidth}
+                  y={chartHeight - padding.bottom + 25}
+                  fill="rgba(255, 255, 255, 0.5)"
+                  fontSize="11"
+                  textAnchor="middle"
+                >
+                  GW{gw}
+                </text>
+              ))}
+              
+              {/* Team lines */}
+              {standings.map((team, idx) => {
+                const teamHistory = positionHistory
+                  .filter(h => h.entry_id === team.entry_id)
+                  .sort((a, b) => a.gameweek - b.gameweek);
+                
+                if (teamHistory.length === 0) return null;
+                
+                const color = colors[idx % colors.length];
+                const isHovered = hoveredTeam === team.entry_id;
+                
+                const points = teamHistory.map(h => ({
+                  x: padding.left + ((h.gameweek - 1) / maxGW) * plotWidth,
+                  y: padding.top + (h.position - 0.5) * (plotHeight / 12),
+                  gw: h.gameweek,
+                  pos: h.position,
+                  points: h.points,
+                  inDanger: [7, 8, 10, 11, 12].includes(h.position)
+                }));
+                
+                // Create path
+                const pathD = points.map((p, i) => 
+                  `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`
+                ).join(' ');
+                
+                return (
+                  <g 
+                    key={team.entry_id}
+                    className="team-line-group"
+                    onMouseEnter={() => setHoveredTeam(team.entry_id)}
+                    onMouseLeave={() => setHoveredTeam(null)}
+                  >
+                    {/* Glow effect when hovered */}
+                    {isHovered && (
+                      <path
+                        d={pathD}
+                        stroke={color}
+                        strokeWidth="8"
+                        fill="none"
+                        opacity="0.2"
+                        filter="blur(4px)"
+                      />
+                    )}
+                    
+                    {/* Main line */}
+                    <path
+                      d={pathD}
+                      stroke={color}
+                      strokeWidth={isHovered ? "3" : "2"}
+                      fill="none"
+                      opacity={hoveredTeam === null || isHovered ? "0.9" : "0.2"}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="position-line transition-all duration-200"
+                    />
+                    
+                    {/* Data points */}
+                    {points.map((point, i) => (
+                      <circle
+                        key={i}
+                        cx={point.x}
+                        cy={point.y}
+                        r={isHovered ? "5" : "3"}
+                        fill={point.inDanger ? "#ef4444" : color}
+                        stroke="white"
+                        strokeWidth="1.5"
+                        opacity={hoveredTeam === null || isHovered ? "1" : "0.3"}
+                        className="transition-all duration-200"
+                      >
+                        <title>
+                          {team.player_first_name} {team.player_last_name}
+                          {'\n'}GW{point.gw}: P{point.pos} ({point.points} pts)
+                        </title>
+                      </circle>
+                    ))}
+                    
+                    {/* Name label at end */}
+                    {isHovered && points.length > 0 && (
+                      <text
+                        x={points[points.length - 1].x + 10}
+                        y={points[points.length - 1].y}
+                        fill={color}
+                        fontSize="13"
+                        fontWeight="600"
+                        dominantBaseline="middle"
+                      >
+                        {team.player_first_name} {team.player_last_name}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+              
+              {/* Axis labels */}
+              <text
+                x={padding.left - 45}
+                y={chartHeight / 2}
+                fill="rgba(255, 255, 255, 0.6)"
+                fontSize="12"
+                fontWeight="500"
+                textAnchor="middle"
+                transform={`rotate(-90, ${padding.left - 45}, ${chartHeight / 2})`}
+              >
+                Position
+              </text>
+              
+              <text
+                x={chartWidth / 2}
+                y={chartHeight - 10}
+                fill="rgba(255, 255, 255, 0.6)"
+                fontSize="12"
+                fontWeight="500"
+                textAnchor="middle"
+              >
+                Gameweek
+              </text>
+            </svg>
+            
+            {/* Legend */}
+            <div className="mt-6 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {standings.map((team, idx) => (
+                <div
+                  key={team.entry_id}
+                  className="team-legend-item flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all hover:bg-white/5"
+                  onMouseEnter={() => setHoveredTeam(team.entry_id)}
+                  onMouseLeave={() => setHoveredTeam(null)}
+                  style={{
+                    opacity: hoveredTeam === null || hoveredTeam === team.entry_id ? 1 : 0.4,
+                    transform: hoveredTeam === team.entry_id ? 'scale(1.05)' : 'scale(1)'
+                  }}
+                >
+                  <div 
+                    style={{ 
+                      width: '14px', 
+                      height: '14px', 
+                      backgroundColor: colors[idx % colors.length],
+                      borderRadius: '50%',
+                      boxShadow: hoveredTeam === team.entry_id ? `0 0 8px ${colors[idx % colors.length]}` : 'none'
+                    }} 
+                  />
+                  <span className="text-white/80 text-sm font-medium truncate">
+                    {team.player_first_name} {team.player_last_name}
+                  </span>
+                </div>
+              ))}
+            </div>
+            
+            <p className="text-white/40 text-xs mt-6 text-center">
+              🔴 Red dots indicate time spent in danger zone (positions 7, 8, 10, 11, 12) • Hover over lines to highlight
+            </p>
+          </div>
+        );
       };
 
       if (!isAuthenticated) {
         return (
-          <div className="min-h-screen bg-gradient-to-br from-red-900 via-yellow-600 to-red-800 flex items-center justify-center p-5">
-            <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-16 rounded-3xl border-4 border-yellow-400 shadow-2xl max-w-md w-full text-center">
-              <div className="text-7xl mb-5">🍔</div>
-              <Lock size={64} className="text-yellow-300 mx-auto mb-5" />
-              <h1 className="text-yellow-300 text-5xl font-black mb-3">FPL DRAFT</h1>
-              <p className="text-yellow-100 mb-2 text-2xl font-bold">Spreadsheet Merchants 3.0</p>
-              <p className="text-red-900 mb-10 font-bold">🍟 McDonald's Punishment League 🍟</p>
-              <form onSubmit={handlePasswordSubmit}>
-                <input
-                  type="password"
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="Enter password"
-                  className="w-full p-4 mb-5 bg-red-900 border-2 border-yellow-400 rounded-xl text-yellow-100 text-lg placeholder-yellow-300"
-                  autoFocus
-                />
-                <button type="submit" className="w-full p-4 bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-xl text-red-900 font-bold text-lg hover:scale-105 transition-transform shadow-lg">
-                  Enter The Golden Arches
+          <div className="min-h-screen flex items-center justify-center p-6">
+            <div className="glass-card rounded-2xl p-8 max-w-md w-full shadow-2xl">
+              <div className="text-center mb-8">
+                <div className="text-6xl mb-4">🍔</div>
+                <h1 className="text-3xl font-bold text-white mb-2">
+                  Spreadsheet Merchants
+                </h1>
+                <p className="text-white/60">FPL Draft League Tracker</p>
+              </div>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-white/80 text-sm font-medium mb-2">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-3 text-white/40" size={20} />
+                    <input
+                      type="password"
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                      className="w-full pl-11 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:border-yellow-400/50 focus:ring-2 focus:ring-yellow-400/20"
+                      placeholder="Enter league password"
+                    />
+                  </div>
+                </div>
+                
+                <button
+                  onClick={handleLogin}
+                  className="w-full py-3 bg-gradient-to-r from-yellow-400 to-yellow-500 text-gray-900 font-semibold rounded-xl hover:from-yellow-300 hover:to-yellow-400 transition-all shadow-lg hover:shadow-yellow-400/50"
+                >
+                  Access League
                 </button>
-              </form>
+              </div>
             </div>
           </div>
         );
       }
 
       return (
-        <div className="min-h-screen bg-gradient-to-br from-red-900 via-yellow-600 to-red-800 p-5">
-          {showConfig && (
-            <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-5">
-              <div className="bg-gradient-to-br from-gray-900 to-blue-900 p-10 rounded-2xl max-w-2xl w-full border-2 border-green-400 shadow-2xl">
-                <h2 className="text-green-400 text-3xl font-bold mb-8">⚙️ Configuration</h2>
+        <div className="min-h-screen">
+          {/* Header */}
+          <div className="sticky top-0 z-50 glass-card border-b border-white/10">
+            <div className="max-w-7xl mx-auto px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="text-4xl">🍔</div>
+                  <div>
+                    <h1 className="text-2xl font-bold text-white">
+                      {config.leagueName}
+                    </h1>
+                    <p className="text-sm text-white/50">
+                      {lastUpdated && `Updated ${lastUpdated.toLocaleTimeString()}`}
+                      <span className="ml-2 text-yellow-400/60">• Cached 24h</span>
+                    </p>
+                  </div>
+                </div>
                 
-                <div className="mb-5">
-                  <label className="text-white block mb-2 font-semibold">League ID</label>
-                  <input
-                    type="text"
-                    value={config.leagueId || ''}
-                    onChange={(e) => setConfig({ ...config, leagueId: e.target.value })}
-                    placeholder="Enter your FPL Draft League ID"
-                    className="w-full p-3 bg-gray-950 border-2 border-green-400 rounded-lg text-white"
-                  />
-                  <p className="text-gray-500 text-xs mt-2">This is your team entry ID (81877)</p>
-                </div>
-
-                <div className="mb-5">
-                  <label className="text-white block mb-2 font-semibold">League Name</label>
-                  <input
-                    type="text"
-                    value={config.leagueName}
-                    onChange={(e) => setConfig({ ...config, leagueName: e.target.value })}
-                    className="w-full p-3 bg-gray-950 border-2 border-green-400 rounded-lg text-white"
-                  />
-                </div>
-
-                <div className="mb-8">
-                  <label className="text-white block mb-2 font-semibold">Password</label>
-                  <input
-                    type="password"
-                    value={config.password}
-                    onChange={(e) => setConfig({ ...config, password: e.target.value })}
-                    className="w-full p-3 bg-gray-950 border-2 border-green-400 rounded-lg text-white"
-                  />
-                </div>
-
-                <div className="flex gap-3">
+                <div className="flex items-center gap-3">
                   <button
-                    onClick={() => {
-                      setShowConfig(false);
-                      if (config.leagueId) fetchLeagueData();
-                    }}
-                    className="flex-1 p-4 bg-gradient-to-r from-green-400 to-green-500 rounded-lg text-gray-900 font-bold"
+                    onClick={fetchLeagueData}
+                    disabled={loading}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
+                      loading 
+                        ? 'bg-white/5 text-white/40 cursor-not-allowed' 
+                        : 'bg-white/10 text-white hover:bg-white/20'
+                    }`}
                   >
-                    Save & Refresh Data
+                    <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                    <span className="hidden sm:inline">
+                      {loading ? 'Loading...' : 'Refresh'}
+                    </span>
                   </button>
-                  <button onClick={() => setShowConfig(false)} className="px-6 py-4 bg-gray-800 border-2 border-gray-600 rounded-lg text-white font-semibold">
-                    Cancel
+                  
+                  <button 
+                    onClick={() => setShowConfig(true)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium bg-white/10 text-white hover:bg-white/20 transition-all"
+                  >
+                    <Settings size={18} />
+                    <span className="hidden sm:inline">Settings</span>
                   </button>
                 </div>
-              </div>
-            </div>
-          )}
-
-          <div className="max-w-7xl mx-auto mb-10 bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 shadow-2xl">
-            <div className="flex justify-between items-center flex-wrap gap-5">
-              <div>
-                <div className="text-6xl mb-2">🍔</div>
-                <h1 className="text-6xl font-black text-yellow-300 mb-2" style={{textShadow: '3px 3px 0px rgba(139, 0, 0, 0.8)'}}>
-                  {config.leagueName}
-                </h1>
-                <p className="text-yellow-100 font-bold text-lg">
-                  🍟 McDonald's Punishment League 🍟
-                </p>
-                <p className="text-red-900 font-semibold">
-                  {lastUpdated && `Last updated: ${lastUpdated.toLocaleTimeString()}`}
-                  {lastUpdated && <span className="text-yellow-200 ml-2 text-sm">(Cached for 24hrs to save credits 💰)</span>}
-                </p>
-              </div>
-              <div className="flex gap-3">
-                <button
-                  onClick={fetchLeagueData}
-                  disabled={loading}
-                  className={`px-6 py-4 rounded-xl font-bold flex items-center gap-2 border-2 ${loading ? 'bg-red-900 border-yellow-600' : 'bg-yellow-400 text-red-900 border-yellow-500 hover:bg-yellow-300'} shadow-lg`}
-                >
-                  <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-                  {loading ? 'Loading...' : '🔄 Refresh'}
-                </button>
-                <button onClick={() => setShowConfig(true)} className="px-6 py-4 bg-red-800 border-2 border-yellow-400 rounded-xl text-yellow-300 font-semibold flex items-center gap-2 hover:bg-red-700">
-                  <Settings size={18} />
-                  Settings
-                </button>
               </div>
             </div>
           </div>
 
-          <div className="max-w-7xl mx-auto">
+          <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
             {error && (
-              <div className="bg-red-500 bg-opacity-10 border-2 border-red-500 rounded-xl p-5 mb-8 flex items-center gap-3">
-                <AlertCircle size={24} className="text-red-500" />
-                <div>
-                  <h3 className="text-red-500">Error</h3>
-                  <p className="text-white">{error}</p>
-                </div>
+              <div className="glass-card rounded-xl p-4 border-l-4 border-red-500">
+                <p className="text-red-400 font-medium">Error: {error}</p>
               </div>
             )}
 
-            {!config.leagueId && (
-              <div className="bg-gradient-to-br from-gray-900 to-blue-900 border-2 border-green-400 rounded-2xl p-10 mb-8 text-center">
-                <Trophy size={64} className="text-green-400 mx-auto mb-5" />
-                <h2 className="text-green-400 text-4xl mb-4 font-bold">Welcome!</h2>
-                <p className="text-gray-300 text-lg mb-8">Click Settings to configure your League ID</p>
-                <button onClick={() => setShowConfig(true)} className="px-8 py-4 bg-gradient-to-r from-green-400 to-green-500 rounded-xl text-gray-900 font-bold text-lg">
-                  Configure Now
-                </button>
-              </div>
-            )}
-
-            {standings.length > 0 && (
-              <>
-                {/* McDonald's Punishment Tracker */}
-                <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mb-8 shadow-2xl">
-                  <h2 className="text-4xl font-black text-yellow-300 mb-6 flex items-center gap-3" style={{textShadow: '2px 2px 0px rgba(139, 0, 0, 0.8)'}}>
-                    🍔 McDonald's Punishment Tracker
+            {/* Position History */}
+            {positionHistory.length > 0 && (
+              <div className="glass-card rounded-2xl p-8 fade-in">
+                <div className="flex items-center gap-3 mb-6">
+                  <TrendingUp size={24} className="text-yellow-400" />
+                  <h2 className="text-2xl font-bold text-white">
+                    Position History
                   </h2>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                    {/* Winner Section */}
-                    <div className="bg-yellow-400 p-6 rounded-2xl border-4 border-yellow-300 shadow-lg">
-                      <h3 className="text-2xl font-black text-red-900 mb-4">🏆 CHAMPION</h3>
-                      {standings[0] && (
-                        <div className="text-center">
-                          <p className="text-3xl font-black text-red-900 mb-2">{standings[0].entry_name}</p>
-                          <p className="text-xl font-bold text-red-800">Wins $200 Merch!</p>
-                          <p className="text-sm text-red-700 mt-2">Paid by 2nd-12th place ($18.18 each)</p>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Safe Zone */}
-                    <div className="bg-green-500 p-6 rounded-2xl border-4 border-green-400 shadow-lg">
-                      <h3 className="text-2xl font-black text-white mb-4">😌 SAFE ZONE</h3>
-                      <div className="text-center">
-                        <p className="text-lg font-bold text-white">2nd - 6th Place</p>
-                        <p className="text-3xl my-2">✅</p>
-                        <p className="text-sm text-white">No punishment!</p>
-                        <div className="mt-3 text-lg font-bold text-white">
-                          <p>9th Place</p>
-                          <p className="text-sm">The Lucky Escape! 🍀</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Punishment Table */}
-                  <div className="bg-red-900 p-6 rounded-2xl border-4 border-red-700">
-                    <h3 className="text-2xl font-black text-yellow-300 mb-4">⚠️ THE DANGER ZONE ⚠️</h3>
-                    <div className="space-y-3">
-                      {[
-                        { rank: 7, hours: 8 },
-                        { rank: 8, hours: 10 },
-                        { rank: 10, hours: 14 },
-                        { rank: 11, hours: 16 },
-                        { rank: 12, hours: 18 }
-                      ].map(punishment => {
-                        const team = standings.find(s => s.rank === punishment.rank);
-                        return team ? (
-                          <div key={punishment.rank} className={`bg-red-800 p-4 rounded-xl border-2 ${punishment.rank === 12 ? 'border-yellow-400 shadow-lg' : 'border-red-600'}`}>
-                            <div className="flex justify-between items-center flex-wrap gap-3">
-                              <div className="flex items-center gap-3">
-                                <span className="text-3xl">{punishment.rank === 12 ? '💀' : '🍔'}</span>
-                                <div>
-                                  <p className="text-lg font-bold text-yellow-300">{punishment.rank}th Place: {team.entry_name}</p>
-                                  <p className="text-sm text-yellow-100">{team.total} points</p>
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <p className="text-3xl font-black text-yellow-400">{punishment.hours} hrs</p>
-                                <p className="text-xs text-yellow-200">in McDonald's</p>
-                              </div>
-                            </div>
-                            {/* French fry progress bar */}
-                            <div className="mt-3 bg-red-950 rounded-full h-3 overflow-hidden">
-                              <div 
-                                className="bg-yellow-400 h-full rounded-full transition-all"
-                                style={{width: `${(punishment.hours / 18) * 100}%`}}
-                              ></div>
-                            </div>
-                          </div>
-                        ) : null;
-                      })}
-                    </div>
-                  </div>
                 </div>
+                
+                <PositionChart />
+              </div>
+            )}
 
-                {/* League Standings */}
-                <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mb-8 shadow-2xl">
-                <h2 className="text-3xl font-bold text-yellow-300 mb-6 flex items-center gap-3">
-                  <Users size={28} />
-                  Full League Standings
+            {/* Standings Table */}
+            {standings.length > 0 && (
+              <div className="glass-card rounded-2xl p-8 fade-in">
+                <h2 className="text-2xl font-bold text-white mb-6">
+                  League Standings
                 </h2>
+                
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
-                      <tr className="border-b-4 border-yellow-400">
-                        <th className="p-4 text-left text-yellow-300 font-bold">Rank</th>
-                        <th className="p-4 text-left text-yellow-300 font-bold">Team</th>
-                        <th className="p-4 text-left text-yellow-300 font-bold">Points</th>
-                        <th className="p-4 text-left text-yellow-300 font-bold">This GW</th>
-                        <th className="p-4 text-left text-yellow-300 font-bold">Status</th>
+                      <tr className="border-b border-white/10">
+                        <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Rank</th>
+                        <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Manager</th>
+                        <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Team</th>
+                        <th className="text-right py-3 px-4 text-white/60 font-medium text-sm">Points</th>
+                        <th className="text-right py-3 px-4 text-white/60 font-medium text-sm">Punishment</th>
                       </tr>
                     </thead>
                     <tbody>
                       {standings.map((team, idx) => {
-                        let status = '';
-                        let statusColor = '';
-                        if (team.rank === 1) {
-                          status = '🏆 WINNER';
-                          statusColor = 'text-yellow-300 font-black';
-                        } else if (team.rank >= 2 && team.rank <= 6) {
-                          status = '✅ Safe';
-                          statusColor = 'text-green-300';
-                        } else if (team.rank === 9) {
-                          status = '🍀 Lucky!';
-                          statusColor = 'text-green-300';
-                        } else if (team.rank === 7) {
-                          status = '🍔 8hrs';
-                          statusColor = 'text-orange-300';
-                        } else if (team.rank === 8) {
-                          status = '🍔 10hrs';
-                          statusColor = 'text-orange-300';
-                        } else if (team.rank === 10) {
-                          status = '⚠️ 14hrs';
-                          statusColor = 'text-red-300';
-                        } else if (team.rank === 11) {
-                          status = '💀 16hrs';
-                          statusColor = 'text-red-400';
-                        } else if (team.rank === 12) {
-                          status = '💀 18hrs';
-                          statusColor = 'text-red-500 font-black';
-                        }
+                        const isPunishment = team.rank === 1 || team.rank >= 7;
+                        const punishmentText = team.rank === 1 
+                          ? '$200 merch (paid by others)' 
+                          : team.rank >= 7 
+                          ? `${8 + (team.rank - 7) * 2}hrs at McDonald's` 
+                          : '-';
                         
                         return (
-                          <tr key={idx} className={`border-b-2 border-yellow-600 ${team.rank === 1 ? 'bg-yellow-400 bg-opacity-20' : team.rank === 12 ? 'bg-red-900 bg-opacity-50' : ''}`}>
-                            <td className="p-4 text-yellow-100 font-semibold text-lg">
-                              {team.rank}
-                              {team.rank === 1 && <Trophy size={16} className="text-yellow-400 inline ml-2" />}
-                              {team.rank === 12 && <span className="ml-2">💀</span>}
+                          <tr 
+                            key={team.entry_id}
+                            className={`border-b border-white/5 transition-colors hover:bg-white/5 ${
+                              isPunishment ? 'bg-yellow-400/5' : ''
+                            }`}
+                          >
+                            <td className="py-4 px-4">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-lg font-bold ${
+                                  team.rank === 1 ? 'text-yellow-400' : 'text-white'
+                                }`}>
+                                  {team.rank}
+                                </span>
+                                {team.rank === 1 && <span className="text-xl">🏆</span>}
+                                {isPunishment && team.rank !== 1 && <span className="text-xl">🍟</span>}
+                              </div>
                             </td>
-                            <td className="p-4 text-yellow-100 font-bold">{team.entry_name}</td>
-                            <td className="p-4 text-yellow-300 font-bold text-xl">{team.total || 0}</td>
-                            <td className="p-4">
-                              <span className="px-3 py-1 bg-yellow-400 bg-opacity-30 rounded-full text-yellow-200 text-sm font-semibold">
-                                {team.event_total || 0} pts
+                            <td className="py-4 px-4">
+                              <span className="text-white font-medium">
+                                {team.player_first_name} {team.player_last_name}
                               </span>
                             </td>
-                            <td className={`p-4 font-bold ${statusColor}`}>
-                              {status}
+                            <td className="py-4 px-4">
+                              <span className="text-white/60">
+                                {team.entry_name}
+                              </span>
+                            </td>
+                            <td className="py-4 px-4 text-right">
+                              <span className="text-white font-semibold">
+                                {team.points_for || team.total || 0}
+                              </span>
+                            </td>
+                            <td className="py-4 px-4 text-right">
+                              <span className={isPunishment ? 'text-yellow-400 font-medium' : 'text-white/40'}>
+                                {punishmentText}
+                              </span>
                             </td>
                           </tr>
                         );
@@ -945,315 +816,123 @@
                   </table>
                 </div>
               </div>
-
-              {/* Position History Chart */}
-              {positionHistory.length > 0 ? (
-                <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 mt-8 shadow-2xl">
-                  <h2 className="text-4xl font-black text-yellow-300 mb-6 flex items-center gap-3" style={{textShadow: '2px 2px 0px rgba(139, 0, 0, 0.8)'}}>
-                    📈 Position History
-                  </h2>
-                  <div className="bg-red-900 p-6 rounded-2xl border-2 border-yellow-400 overflow-x-auto">
-                    <div style={{minWidth: '800px', height: '400px', position: 'relative'}}>
-                      <svg width="100%" height="100%" viewBox="0 0 1000 400" preserveAspectRatio="xMidYMid meet">
-                        {/* Grid lines */}
-                        {[1,2,3,4,5,6,7,8,9,10,11,12].map(pos => (
-                          <g key={pos}>
-                            <line
-                              x1="50"
-                              y1={30 + (pos - 1) * 28}
-                              x2="950"
-                              y2={30 + (pos - 1) * 28}
-                              stroke={pos === 7 || pos === 8 || pos === 10 || pos === 11 || pos === 12 ? 'rgba(239, 68, 68, 0.3)' : 'rgba(253, 224, 71, 0.15)'}
-                              strokeWidth={pos === 1 || pos === 6 || pos === 9 ? '2' : '1'}
-                            />
-                            <text x="35" y={35 + (pos - 1) * 28} fill="#fde047" fontSize="12" textAnchor="end">
-                              {pos}
-                            </text>
-                          </g>
-                        ))}
-                        
-                        {/* Gameweek labels */}
-                        {Array.from({length: Math.max(...positionHistory.map(h => h.gameweek))}, (_, i) => i + 1).map(gw => (
-                          <text
-                            key={gw}
-                            x={50 + ((gw - 1) * 900 / Math.max(...positionHistory.map(h => h.gameweek)))}
-                            y="395"
-                            fill="#fde047"
-                            fontSize="11"
-                            textAnchor="middle"
-                          >
-                            {gw}
-                          </text>
-                        ))}
-                        
-                        {/* Lines for each team */}
-                        {standings.map((team, idx) => {
-                          const teamHistory = positionHistory.filter(h => h.entry_id === team.entry_id).sort((a, b) => a.gameweek - b.gameweek);
-                          if (teamHistory.length === 0) return null;
-                          
-                          const colors = [
-                            '#22c55e', '#3b82f6', '#a855f7', '#f97316', '#06b6d4', '#f59e0b',
-                            '#ec4899', '#8b5cf6', '#10b981', '#f43f5e', '#14b8a6', '#84cc16'
-                          ];
-                          const color = colors[idx % colors.length];
-                          
-                          const maxGW = Math.max(...positionHistory.map(h => h.gameweek));
-                          const points = teamHistory.map(h => ({
-                            x: 50 + ((h.gameweek - 1) * 900 / maxGW),
-                            y: 30 + (h.position - 1) * 28,
-                            gw: h.gameweek,
-                            pos: h.position,
-                            inDanger: h.position === 7 || h.position === 8 || h.position === 10 || h.position === 11 || h.position === 12
-                          }));
-                          
-                          return (
-                            <g key={team.entry_id}>
-                              {/* Line segments with danger zone coloring */}
-                              {points.map((point, i) => {
-                                if (i === 0) return null;
-                                const prev = points[i - 1];
-                                const isDanger = point.inDanger || prev.inDanger;
-                                return (
-                                  <line
-                                    key={i}
-                                    x1={prev.x}
-                                    y1={prev.y}
-                                    x2={point.x}
-                                    y2={point.y}
-                                    stroke={isDanger ? '#ef4444' : color}
-                                    strokeWidth="2.5"
-                                    opacity={isDanger ? "0.9" : "0.6"}
-                                  />
-                                );
-                              })}
-                              
-                              {/* Points */}
-                              {points.map((point, i) => (
-                                <circle
-                                  key={i}
-                                  cx={point.x}
-                                  cy={point.y}
-                                  r="3.5"
-                                  fill={point.inDanger ? '#ef4444' : color}
-                                  stroke={point.inDanger ? '#fde047' : 'white'}
-                                  strokeWidth="1.5"
-                                />
-                              ))}
-                            </g>
-                          );
-                        })}
-                      </svg>
-                    </div>
-                    <div className="mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                      {standings.map((team, idx) => {
-                        const colors = [
-                          '#22c55e', '#3b82f6', '#a855f7', '#f97316', '#06b6d4', '#f59e0b',
-                          '#ec4899', '#8b5cf6', '#10b981', '#f43f5e', '#14b8a6', '#84cc16'
-                        ];
-                        return (
-                          <div key={team.entry_id} className="flex items-center gap-2">
-                            <div style={{width: '14px', height: '14px', backgroundColor: colors[idx % colors.length], borderRadius: '50%'}} />
-                            <span className="text-yellow-100 text-xs truncate">{team.entry_name}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <p className="text-yellow-200 text-xs mt-4 text-center">
-                      🔴 Red segments = Time spent in the danger zone (7th, 8th, 10th, 11th, 12th)
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-6 rounded-3xl border-4 border-yellow-400 mt-8 shadow-2xl">
-                  <p className="text-yellow-300 text-center">📊 Loading position history... (Check console for details)</p>
-                </div>
-              )}
-
-              </>
             )}
 
-            {/* Transfer Analysis Loading */}
-            {analysisLoading && (
-              <div className="bg-gradient-to-br from-red-700 to-yellow-500 p-8 rounded-3xl border-4 border-yellow-400 shadow-2xl mt-8">
-                <h2 className="text-3xl font-bold text-yellow-300 mb-6 flex items-center gap-3">
-                  🔄 Analyzing Transfers...
+            {/* Transfer Analysis */}
+            {transferAnalysis && (
+              <div className="glass-card rounded-2xl p-8 fade-in">
+                <h2 className="text-2xl font-bold text-white mb-6">
+                  Transfer Analysis
                 </h2>
-                <div className="text-center">
-                  <div className="text-6xl mb-4 animate-bounce">🍔</div>
-                  <p className="text-yellow-100 text-xl font-bold">{analysisProgress}</p>
-                  <p className="text-yellow-200 text-sm mt-2">This may take 30-60 seconds...</p>
+                
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div>
+                    <h3 className="text-lg font-semibold text-white/80 mb-4">Most Active</h3>
+                    <div className="space-y-2">
+                      {transferAnalysis.byTotal.slice(0, 5).map((team, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-white/5">
+                          <span className="text-white font-medium">{team.player_name}</span>
+                          <span className="text-yellow-400 font-semibold">{team.transferCount} transfers</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-lg font-semibold text-white/80 mb-4">Best Decision Making</h3>
+                    <div className="space-y-2">
+                      {transferAnalysis.byAverage.slice(0, 5).map((team, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-white/5">
+                          <span className="text-white font-medium">{team.player_name}</span>
+                          <span className="text-green-400 font-semibold">
+                            {team.avgImpact >= 0 ? '+' : ''}{Math.round(team.avgImpact)} avg
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* Transfer Analysis Leaderboards */}
-            {transferAnalysis && !analysisLoading && (
-              <div className="space-y-8 mt-8">
-                {/* Best Transfers - Total Points */}
-                <div className="bg-gradient-to-br from-green-700 to-green-500 p-8 rounded-3xl border-4 border-green-400 shadow-2xl">
-                  <h2 className="text-3xl font-bold text-white mb-6 flex items-center gap-3">
-                    🏆 BEST TRANSFERS - Total Points
-                  </h2>
-                  <p className="text-green-100 mb-4">The masterstrokes that changed seasons</p>
-                  <div className="space-y-3">
-                    {transferAnalysis.bestTotal.map((t, idx) => (
-                      <div key={idx} className="bg-green-900 bg-opacity-50 p-5 rounded-xl border-2 border-green-400">
-                        <div className="flex justify-between items-start flex-wrap gap-3">
-                          <div className="flex-1">
-                            <p className="text-xl font-bold text-green-300">#{idx + 1} - {t.team_name}</p>
-                            <p className="text-green-100 text-sm mb-2">GW{t.gameweek} (tracked {t.gw_count} gameweeks)</p>
-                            <div className="flex items-center gap-2 text-white">
-                              <span className="line-through text-red-300">{t.player_out}</span>
-                              <span>→</span>
-                              <span className="font-bold text-green-300">{t.player_in}</span>
-                            </div>
-                            <p className="text-sm text-green-200 mt-2">
-                              {t.player_in}: {t.points_in} pts • {t.player_out}: {t.points_out} pts
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-4xl font-black text-green-300">+{t.net_points}</p>
-                            <p className="text-sm text-green-200">+{t.per_gw.toFixed(1)} per GW</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Worst Transfers - Total Points */}
-                <div className="bg-gradient-to-br from-red-700 to-red-500 p-8 rounded-3xl border-4 border-red-400 shadow-2xl">
-                  <h2 className="text-3xl font-bold text-yellow-300 mb-6 flex items-center gap-3">
-                    💀 WORST TRANSFERS - Total Points
-                  </h2>
-                  <p className="text-red-100 mb-4">The disasters that haunt your dreams</p>
-                  <div className="space-y-3">
-                    {transferAnalysis.worstTotal.map((t, idx) => (
-                      <div key={idx} className={`bg-red-900 bg-opacity-50 p-5 rounded-xl border-2 ${idx === 0 ? 'border-yellow-400 shadow-lg' : 'border-red-400'}`}>
-                        <div className="flex justify-between items-start flex-wrap gap-3">
-                          <div className="flex-1">
-                            <p className="text-xl font-bold text-yellow-300">#{idx + 1} - {t.team_name} {idx === 0 && '💀'}</p>
-                            <p className="text-red-100 text-sm mb-2">GW{t.gameweek} (tracked {t.gw_count} gameweeks)</p>
-                            <div className="flex items-center gap-2 text-white">
-                              <span className="font-bold text-yellow-300">{t.player_out}</span>
-                              <span>→</span>
-                              <span className="line-through text-red-300">{t.player_in}</span>
-                            </div>
-                            <p className="text-sm text-red-200 mt-2">
-                              {t.player_in}: {t.points_in} pts • {t.player_out}: {t.points_out} pts
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-4xl font-black text-red-300">{t.net_points}</p>
-                            <p className="text-sm text-red-200">{t.per_gw.toFixed(1)} per GW</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Best Transfers - Per Gameweek */}
-                <div className="bg-gradient-to-br from-blue-700 to-blue-500 p-8 rounded-3xl border-4 border-blue-400 shadow-2xl">
-                  <h2 className="text-3xl font-bold text-white mb-6 flex items-center gap-3">
-                    📊 BEST TRANSFERS - Per Gameweek
-                  </h2>
-                  <p className="text-blue-100 mb-4">The smartest decisions (quality over quantity)</p>
-                  <div className="space-y-3">
-                    {transferAnalysis.bestPerGW.map((t, idx) => (
-                      <div key={idx} className="bg-blue-900 bg-opacity-50 p-5 rounded-xl border-2 border-blue-400">
-                        <div className="flex justify-between items-start flex-wrap gap-3">
-                          <div className="flex-1">
-                            <p className="text-xl font-bold text-blue-300">#{idx + 1} - {t.team_name}</p>
-                            <p className="text-blue-100 text-sm mb-2">GW{t.gameweek} ({t.gw_count} gameweeks tracked)</p>
-                            <div className="flex items-center gap-2 text-white">
-                              <span className="line-through text-red-300">{t.player_out}</span>
-                              <span>→</span>
-                              <span className="font-bold text-blue-300">{t.player_in}</span>
-                            </div>
-                            <p className="text-sm text-blue-200 mt-2">
-                              Total impact: +{t.net_points} points
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-4xl font-black text-blue-300">+{t.per_gw.toFixed(1)}</p>
-                            <p className="text-sm text-blue-200">per GW</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Worst Transfers - Per Gameweek */}
-                <div className="bg-gradient-to-br from-purple-700 to-purple-500 p-8 rounded-3xl border-4 border-purple-400 shadow-2xl">
-                  <h2 className="text-3xl font-bold text-yellow-300 mb-6 flex items-center gap-3">
-                    🤦 WORST TRANSFERS - Per Gameweek
-                  </h2>
-                  <p className="text-purple-100 mb-4">The dumbest decisions (efficiency of failure)</p>
-                  <div className="space-y-3">
-                    {transferAnalysis.worstPerGW.map((t, idx) => (
-                      <div key={idx} className={`bg-purple-900 bg-opacity-50 p-5 rounded-xl border-2 ${idx === 0 ? 'border-yellow-400 shadow-lg' : 'border-purple-400'}`}>
-                        <div className="flex justify-between items-start flex-wrap gap-3">
-                          <div className="flex-1">
-                            <p className="text-xl font-bold text-yellow-300">#{idx + 1} - {t.team_name} {idx === 0 && '🤡'}</p>
-                            <p className="text-purple-100 text-sm mb-2">GW{t.gameweek} ({t.gw_count} gameweeks tracked)</p>
-                            <div className="flex items-center gap-2 text-white">
-                              <span className="font-bold text-yellow-300">{t.player_out}</span>
-                              <span>→</span>
-                              <span className="line-through text-red-300">{t.player_in}</span>
-                            </div>
-                            <p className="text-sm text-purple-200 mt-2">
-                              Total damage: {t.net_points} points
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-4xl font-black text-purple-300">{t.per_gw.toFixed(1)}</p>
-                            <p className="text-sm text-purple-200">per GW</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Summary Stats */}
-                <div className="bg-gradient-to-br from-gray-700 to-gray-600 p-8 rounded-3xl border-4 border-gray-500 shadow-2xl">
-                  <h2 className="text-3xl font-bold text-white mb-6">📈 Transfer Database Stats</h2>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-gray-800 p-4 rounded-xl text-center">
-                      <p className="text-4xl font-black text-yellow-400">{transferAnalysis.allTransfers.length}</p>
-                      <p className="text-gray-300 text-sm">Total Transfers</p>
-                    </div>
-                    <div className="bg-gray-800 p-4 rounded-xl text-center">
-                      <p className="text-4xl font-black text-green-400">
-                        {transferAnalysis.allTransfers.filter(t => t.net_points > 0).length}
-                      </p>
-                      <p className="text-gray-300 text-sm">Good Transfers</p>
-                    </div>
-                    <div className="bg-gray-800 p-4 rounded-xl text-center">
-                      <p className="text-4xl font-black text-red-400">
-                        {transferAnalysis.allTransfers.filter(t => t.net_points < 0).length}
-                      </p>
-                      <p className="text-gray-300 text-sm">Bad Transfers</p>
-                    </div>
-                    <div className="bg-gray-800 p-4 rounded-xl text-center">
-                      <p className="text-4xl font-black text-yellow-400">
-                        {(transferAnalysis.allTransfers.reduce((sum, t) => sum + Math.abs(t.net_points), 0) / transferAnalysis.allTransfers.length).toFixed(1)}
-                      </p>
-                      <p className="text-gray-300 text-sm">Avg Impact</p>
-                    </div>
-                  </div>
-                </div>
+            {analysisLoading && (
+              <div className="glass-card rounded-2xl p-8 text-center">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-400 mb-4"></div>
+                <p className="text-white/60">{analysisProgress}</p>
               </div>
             )}
           </div>
+
+          {/* Settings Modal */}
+          {showConfig && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 z-50">
+              <div className="glass-card rounded-2xl p-8 max-w-md w-full shadow-2xl">
+                <h2 className="text-2xl font-bold text-white mb-6">Settings</h2>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-white/80 text-sm font-medium mb-2">
+                      League ID
+                    </label>
+                    <input
+                      type="text"
+                      value={config.leagueId}
+                      onChange={(e) => setConfig({...config, leagueId: e.target.value})}
+                      className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-yellow-400/50"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-white/80 text-sm font-medium mb-2">
+                      Your Team ID
+                    </label>
+                    <input
+                      type="text"
+                      value={config.userTeamId}
+                      onChange={(e) => setConfig({...config, userTeamId: e.target.value})}
+                      className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-yellow-400/50"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-white/80 text-sm font-medium mb-2">
+                      League Name
+                    </label>
+                    <input
+                      type="text"
+                      value={config.leagueName}
+                      onChange={(e) => setConfig({...config, leagueName: e.target.value})}
+                      className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-yellow-400/50"
+                    />
+                  </div>
+                </div>
+                
+                <div className="flex gap-3 mt-6">
+                  <button
+                    onClick={() => {
+                      localStorage.setItem('fpl-config', JSON.stringify(config));
+                      setShowConfig(false);
+                      if (config.leagueId) fetchLeagueData();
+                    }}
+                    className="flex-1 py-3 bg-gradient-to-r from-yellow-400 to-yellow-500 text-gray-900 font-semibold rounded-xl hover:from-yellow-300 hover:to-yellow-400 transition-all"
+                  >
+                    Save & Refresh
+                  </button>
+                  <button 
+                    onClick={() => setShowConfig(false)}
+                    className="px-6 py-3 bg-white/10 text-white font-semibold rounded-xl hover:bg-white/20 transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<FPLDraftTracker />);
+    ReactDOM.render(<App />, document.getElementById('root'));
   </script>
 </body>
 </html>
