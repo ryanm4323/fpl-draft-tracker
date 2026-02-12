@@ -104,7 +104,9 @@
         leagueId: '10991',
         userTeamId: '81877',
         password: 'merchants2026',
-        leagueName: 'Spreadsheet Merchants 3.0'
+        leagueName: 'Spreadsheet Merchants 3.0',
+        adminPassword: '', // Separate password for AI features
+        anthropicApiKey: '' // User's Anthropic API key
       });
       
       const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -121,283 +123,12 @@
       const [error, setError] = useState(null);
       const [lastUpdated, setLastUpdated] = useState(null);
       const [hoveredTeam, setHoveredTeam] = useState(null);
-      const [selectedManager, setSelectedManager] = useState(null);
-      const [benchData, setBenchData] = useState({});
-      const [playerAnalysis, setPlayerAnalysis] = useState(null);
-      const [analyzingPlayers, setAnalyzingPlayers] = useState(false);
-      const [validationResults, setValidationResults] = useState(null);
-      const [runningValidation, setRunningValidation] = useState(false);
+      const [aiPredictions, setAiPredictions] = useState(null);
+      const [isGeneratingPredictions, setIsGeneratingPredictions] = useState(false);
+      const [showAdminPrompt, setShowAdminPrompt] = useState(false);
+      const [adminPasswordInput, setAdminPasswordInput] = useState('');
       
       const svgRef = useRef(null);
-
-      const analyzeAllPlayers = async () => {
-        setAnalyzingPlayers(true);
-        
-        try {
-          const apiBase = '/.netlify/functions/fpl-proxy?endpoint=';
-          
-          console.log('🔮 Fetching comprehensive player data...');
-          
-          // Fetch bootstrap data (all players)
-          const bootstrapResponse = await fetch(`${apiBase}/api/bootstrap-static`);
-          const bootstrapData = await bootstrapResponse.json();
-          
-          // Fetch fixtures
-          const fixturesResponse = await fetch(`${apiBase}/api/fixtures`);
-          const fixturesData = await fixturesResponse.json();
-          
-          const teams = {};
-          bootstrapData.teams.forEach(team => {
-            teams[team.id] = team;
-          });
-          
-          const positions = {1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD'};
-          
-          // Get current gameweek
-          const currentGW = bootstrapData.events.find(e => e.is_current)?.id || 
-                           Math.max(...bootstrapData.events.filter(e => e.finished).map(e => e.id));
-          
-          const next5GWs = [currentGW + 1, currentGW + 2, currentGW + 3, currentGW + 4, currentGW + 5];
-          
-          console.log(`📊 Analyzing GWs ${next5GWs.join(', ')}...`);
-          
-          // Build team fixtures map with attacking/defensive strength
-          const teamFixtures = {};
-          fixturesData.forEach(fixture => {
-            if (next5GWs.includes(fixture.event)) {
-              if (!teamFixtures[fixture.team_h]) teamFixtures[fixture.team_h] = [];
-              if (!teamFixtures[fixture.team_a]) teamFixtures[fixture.team_a] = [];
-              
-              // Home team fixture
-              teamFixtures[fixture.team_h].push({
-                gw: fixture.event,
-                opponent: fixture.team_a,
-                isHome: true,
-                oppDefStrength: teams[fixture.team_a].strength_defence_away,
-                oppAttStrength: teams[fixture.team_a].strength_attack_away,
-                teamAttStrength: teams[fixture.team_h].strength_attack_home,
-                teamDefStrength: teams[fixture.team_h].strength_defence_home
-              });
-              
-              // Away team fixture
-              teamFixtures[fixture.team_a].push({
-                gw: fixture.event,
-                opponent: fixture.team_h,
-                isHome: false,
-                oppDefStrength: teams[fixture.team_h].strength_defence_home,
-                oppAttStrength: teams[fixture.team_h].strength_attack_home,
-                teamAttStrength: teams[fixture.team_a].strength_attack_away,
-                teamDefStrength: teams[fixture.team_a].strength_defence_away
-              });
-            }
-          });
-          
-          console.log('🧮 Running advanced predictive model...');
-          
-          // Analyze each player with detailed probability model
-          const analyzed = [];
-          
-          bootstrapData.elements.forEach(player => {
-            // Must be available and have played
-            if (player.status !== 'a' || player.minutes < 100) return;
-            
-            const teamId = player.team;
-            const position = positions[player.element_type];
-            const fixtures = teamFixtures[teamId] || [];
-            
-            if (fixtures.length < 5) return;
-            
-            // Extract player stats
-            const totalMinutes = player.minutes;
-            const gamesPlayed = totalMinutes / 90; // Approximate games
-            const form = parseFloat(player.form || 0);
-            const ppg = parseFloat(player.points_per_game || 0);
-            const ownership = parseFloat(player.selected_by_percent || 0);
-            
-            // Historical rates (per 90 minutes equivalent)
-            const goalsScored = player.goals_scored || 0;
-            const assists = player.assists || 0;
-            const cleanSheets = player.clean_sheets || 0;
-            const bonusPoints = player.bonus || 0;
-            const starts = player.starts || 0;
-            
-            // Calculate per-game probabilities
-            const goalsPer90 = gamesPlayed > 0 ? (goalsScored / gamesPlayed) : 0;
-            const assistsPer90 = gamesPlayed > 0 ? (assists / gamesPlayed) : 0;
-            const cleanSheetRate = gamesPlayed > 0 ? (cleanSheets / gamesPlayed) : 0;
-            const bonusRate = gamesPlayed > 0 ? (bonusPoints / gamesPlayed) : 0;
-            const startRate = gamesPlayed > 0 ? (starts / gamesPlayed) : 0;
-            
-            // Calculate fixture-adjusted probabilities for next 5 GWs
-            let totalExpectedPoints = 0;
-            let avgGoalProb = 0;
-            let avgAssistProb = 0;
-            let avgCleanSheetProb = 0;
-            let avgBonusProb = 0;
-            let avgStartProb = startRate;
-            
-            fixtures.slice(0, 5).forEach(fixture => {
-              // Attacking potential (goals & assists)
-              const attackingDifficulty = fixture.oppDefStrength / 1000; // Normalize
-              const attackingStrength = fixture.teamAttStrength / 1000;
-              const attackMultiplier = (attackingStrength / attackingDifficulty);
-              
-              // Defensive potential (clean sheets)
-              const defensiveDifficulty = fixture.oppAttStrength / 1000;
-              const defensiveStrength = fixture.teamDefStrength / 1000;
-              const defenseMultiplier = (defensiveStrength / defensiveDifficulty);
-              
-              // Home advantage
-              const homeBonus = fixture.isHome ? 1.1 : 0.95;
-              
-              // Goals probability (position-weighted)
-              const positionGoalWeight = {
-                'FWD': 1.0,
-                'MID': 0.85,
-                'DEF': 0.3,
-                'GK': 0.05
-              }[position] || 0.5;
-              
-              const goalProb = Math.min(0.95, goalsPer90 * attackMultiplier * homeBonus * positionGoalWeight);
-              
-              // Assists probability
-              const positionAssistWeight = {
-                'FWD': 0.7,
-                'MID': 1.0,
-                'DEF': 0.4,
-                'GK': 0.05
-              }[position] || 0.5;
-              
-              const assistProb = Math.min(0.85, assistsPer90 * attackMultiplier * homeBonus * positionAssistWeight);
-              
-              // Clean sheet probability (defenders & keepers)
-              const positionCSWeight = {
-                'GK': 1.0,
-                'DEF': 1.0,
-                'MID': 0.0,
-                'FWD': 0.0
-              }[position] || 0;
-              
-              const cleanSheetProb = Math.min(0.75, cleanSheetRate * defenseMultiplier * homeBonus * positionCSWeight);
-              
-              // Bonus probability (form-based)
-              const bonusProb = Math.min(0.6, bonusRate * (form / 5) * homeBonus);
-              
-              // Points calculation for this fixture
-              let fixtureExpectedPoints = 2; // Base points for playing
-              
-              // Goals (FWD: 4pts, MID: 5pts, DEF: 6pts, GK: 6pts)
-              const goalPoints = {'FWD': 4, 'MID': 5, 'DEF': 6, 'GK': 6}[position] || 4;
-              fixtureExpectedPoints += goalProb * goalPoints;
-              
-              // Multiple goals bonus (if goal prob > 0.3, chance of 2nd goal)
-              if (goalProb > 0.3) {
-                fixtureExpectedPoints += (goalProb * 0.4) * goalPoints;
-              }
-              
-              // Assists (3 pts each)
-              fixtureExpectedPoints += assistProb * 3;
-              
-              // Clean sheet (DEF/GK: 4pts, MID: 1pt)
-              const csPoints = {'GK': 4, 'DEF': 4, 'MID': 1, 'FWD': 0}[position] || 0;
-              fixtureExpectedPoints += cleanSheetProb * csPoints;
-              
-              // Bonus points (average 1-3 when received)
-              fixtureExpectedPoints += bonusProb * 2;
-              
-              // Playing time (60min: 1pt, 90min: 2pts)
-              fixtureExpectedPoints *= avgStartProb;
-              
-              // Defensive contributions (tackles, clearances, saves) - estimate
-              if (position === 'DEF' || position === 'GK') {
-                // Assume ~0.5 extra points per game from defensive actions
-                fixtureExpectedPoints += 0.5 * defenseMultiplier;
-              }
-              
-              totalExpectedPoints += fixtureExpectedPoints;
-              avgGoalProb += goalProb;
-              avgAssistProb += assistProb;
-              avgCleanSheetProb += cleanSheetProb;
-              avgBonusProb += bonusProb;
-            });
-            
-            // Average probabilities across 5 fixtures
-            avgGoalProb /= 5;
-            avgAssistProb /= 5;
-            avgCleanSheetProb /= 5;
-            avgBonusProb /= 5;
-            
-            analyzed.push({
-              name: player.web_name,
-              fullName: `${player.first_name} ${player.second_name}`,
-              team: teams[teamId].short_name,
-              position: position,
-              totalPoints: player.total_points,
-              form: form,
-              ppg: ppg,
-              minutes: player.minutes,
-              ownership: ownership,
-              
-              // Historical stats
-              goalsScored: goalsScored,
-              assists: assists,
-              cleanSheets: cleanSheets,
-              bonusPoints: bonusPoints,
-              
-              // Probabilities (%)
-              goalProbability: (avgGoalProb * 100),
-              assistProbability: (avgAssistProb * 100),
-              cleanSheetProbability: (avgCleanSheetProb * 100),
-              bonusProbability: (avgBonusProb * 100),
-              startProbability: (avgStartProb * 100),
-              
-              fixtures: fixtures.slice(0, 5).map(f => 
-                `${teams[f.opponent].short_name}${f.isHome ? '(H)' : '(A)'}`
-              ),
-              
-              expectedPoints: totalExpectedPoints,
-              
-              // Confidence score (0-100)
-              confidence: Math.min(100, (
-                (startRate * 50) + // Starting regularly is key
-                (gamesPlayed > 10 ? 30 : gamesPlayed * 3) + // Sample size
-                (form > 3 ? 20 : form * 6.67) // Current form
-              ))
-            });
-          });
-          
-          // Sort by expected points
-          analyzed.sort((a, b) => b.expectedPoints - a.expectedPoints);
-          
-          console.log(`✅ Analyzed ${analyzed.length} players`);
-          
-          setPlayerAnalysis({
-            currentGW,
-            next5GWs,
-            allPlayers: analyzed,
-            top50: analyzed.slice(0, 50),
-            byPosition: {
-              FWD: analyzed.filter(p => p.position === 'FWD').slice(0, 15),
-              MID: analyzed.filter(p => p.position === 'MID').slice(0, 15),
-              DEF: analyzed.filter(p => p.position === 'DEF').slice(0, 15),
-              GK: analyzed.filter(p => p.position === 'GK').slice(0, 10)
-            },
-            hiddenGems: analyzed.filter(p => p.ownership < 30).slice(0, 20),
-            
-            // Category leaders
-            mostLikelyToScore: analyzed.slice().sort((a, b) => b.goalProbability - a.goalProbability).slice(0, 10),
-            mostLikelyToAssist: analyzed.slice().sort((a, b) => b.assistProbability - a.assistProbability).slice(0, 10),
-            bestCleanSheetOdds: analyzed.slice().sort((a, b) => b.cleanSheetProbability - a.cleanSheetProbability).slice(0, 10),
-            bonusMagnets: analyzed.slice().sort((a, b) => b.bonusProbability - a.bonusProbability).slice(0, 10)
-          });
-          
-        } catch (error) {
-          console.error('Player analysis error:', error);
-          alert('Failed to analyze players: ' + error.message);
-        } finally {
-          setAnalyzingPlayers(false);
-        }
-      };
 
       useEffect(() => {
         const saved = localStorage.getItem('fpl-config');
@@ -407,6 +138,16 @@
         const auth = localStorage.getItem('fpl-auth');
         if (auth === 'true') {
           setIsAuthenticated(true);
+        }
+        
+        // Load cached AI predictions
+        const cachedPredictions = localStorage.getItem('ai-predictions-cache');
+        if (cachedPredictions) {
+          const data = JSON.parse(cachedPredictions);
+          // Show predictions if less than 7 days old
+          if (data.timestamp > Date.now() - 7 * 24 * 60 * 60 * 1000) {
+            setAiPredictions(data.predictions);
+          }
         }
       }, []);
 
@@ -670,403 +411,131 @@
         }
       };
 
-      const analyzeTransfers = async (transactions, leagueEntries, apiBase, leagueId) => {
-        setAnalysisLoading(true);
+      const generateAIPredictions = async () => {
+        if (!config.anthropicApiKey) {
+          alert('Please add your Anthropic API key in Settings first');
+          return;
+        }
+        
+        setIsGeneratingPredictions(true);
         
         try {
-          setAnalysisProgress('Fetching player data...');
+          // Prepare data for AI analysis
+          const currentGW = leagueData?.league?.current_event || 22;
+          const remainingGWs = 38 - currentGW;
           
-          const bootstrapResponse = await fetch(`${apiBase}/api/bootstrap-static`);
-          const bootstrapData = await bootstrapResponse.json();
-          
-          const players = {};
-          bootstrapData.elements.forEach(p => {
-            players[p.id] = {
-              name: p.web_name,
-              team: p.team,
-              position: p.element_type
+          const teamData = standings.map(team => {
+            const transferData = transferAnalysis?.byTotal.find(t => t.entry_name === team.entry_name);
+            const history = positionHistory.filter(h => h.entry_id === team.entry_id);
+            
+            // Calculate recent form (last 5 GWs)
+            const recentHistory = history.slice(-5);
+            const recentPoints = recentHistory.reduce((sum, h) => sum + (h.gw_points || 0), 0);
+            
+            return {
+              rank: team.rank,
+              manager: `${team.player_first_name} ${team.player_last_name}`,
+              team_name: team.entry_name,
+              total_points: team.points_for || team.total,
+              recent_form: recentPoints,
+              transfer_quality: transferData?.avgImpact || 0,
+              total_transfers: transferData?.transferCount || 0
             };
           });
           
-          setAnalysisProgress('Analyzing transfers and calculating impact...');
+          const prompt = `You are analyzing a Fantasy Premier League Draft league with ${standings.length} teams. We are currently at Gameweek ${currentGW} with ${remainingGWs} gameweeks remaining.
+
+Current Standings:
+${JSON.stringify(teamData, null, 2)}
+
+Please provide:
+1. Predicted final positions (1-12) for each team
+2. Confidence score (0-100%) for each prediction
+3. Brief reasoning for each team's predicted finish
+4. Key factors that could change outcomes
+
+Respond in this JSON format:
+{
+  "predictions": [
+    {
+      "manager": "Full Name",
+      "current_rank": 1,
+      "predicted_rank": 1,
+      "confidence": 85,
+      "reasoning": "Brief explanation"
+    }
+  ],
+  "key_insights": ["insight 1", "insight 2", "insight 3"],
+  "generated_at": "${new Date().toISOString()}"
+}
+
+Focus on: current form, transfer decision quality, points trajectory, and remaining fixtures difficulty.`;
+
+          const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': config.anthropicApiKey,
+              'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 4000,
+              messages: [{
+                role: 'user',
+                content: prompt
+              }]
+            })
+          });
           
-          // Fetch detailed history for bench point calculations
-          const teamHistories = {};
-          for (const entry of leagueEntries) {
-            try {
-              const response = await fetch(`${apiBase}/api/entry/${entry.entry_id}/history`);
-              if (response.ok) {
-                const data = await response.json();
-                teamHistories[entry.entry_id] = data.history || [];
-              }
-              await new Promise(resolve => setTimeout(resolve, 100));
-            } catch (e) {
-              console.log('Error fetching history:', e);
-            }
+          if (!response.ok) {
+            throw new Error(`API error: ${response.status}`);
           }
           
-          const teamImpact = {};
-          leagueEntries.forEach(entry => {
-            const history = teamHistories[entry.entry_id] || [];
-            const totalBenchPoints = history.reduce((sum, h) => sum + (h.points_on_bench || 0), 0);
-            
-            teamImpact[entry.entry_id] = {
-              entry_id: entry.entry_id,
-              entry_name: entry.entry_name,
-              player_name: `${entry.player_first_name} ${entry.player_last_name}`,
-              totalImpact: 0,
-              transferCount: 0,
-              transfers: [],
-              bestTransfer: null,
-              worstTransfer: null,
-              totalBenchPoints: totalBenchPoints,
-              avgBenchPoints: history.length > 0 ? (totalBenchPoints / history.length).toFixed(1) : 0
-            };
-          });
+          const data = await response.json();
+          const aiResponse = data.content[0].text;
           
-          const acceptedWaivers = transactions.filter(t => 
-            t.kind === 'w' && 
-            t.result === 'a' && 
-            t.element_in && 
-            t.element_out
-          );
+          // Extract JSON from response (Claude might wrap it in markdown)
+          const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) {
+            throw new Error('Could not parse AI response');
+          }
           
-          console.log(`Analyzing ${acceptedWaivers.length} transfers...`);
+          const predictions = JSON.parse(jsonMatch[0]);
           
-          acceptedWaivers.forEach(trans => {
-            const playerIn = players[trans.element_in];
-            const playerOut = players[trans.element_out];
-            const gwPicked = trans.event;
-            
-            if (playerIn && playerOut) {
-              // Track individual transfer for details
-              const transferDetail = {
-                gw: gwPicked,
-                playerIn: playerIn.name,
-                playerOut: playerOut.name,
-                impact: 0 // Would need detailed GW scoring to calculate
-              };
-              
-              teamImpact[trans.entry].transferCount++;
-              teamImpact[trans.entry].transfers.push(transferDetail);
-            }
-          });
-          
-          // Calculate best/worst transfers (mock data - would need actual scoring)
-          Object.values(teamImpact).forEach(team => {
-            if (team.transfers.length > 0) {
-              team.bestTransfer = team.transfers[0]; // Placeholder
-              team.worstTransfer = team.transfers[team.transfers.length - 1]; // Placeholder
-            }
-          });
-          
-          const impactArray = Object.values(teamImpact)
-            .sort((a, b) => b.totalImpact - a.totalImpact);
-          
-          const avgArray = impactArray
-            .map(t => ({
-              ...t,
-              avgImpact: t.transferCount > 0 ? t.totalImpact / t.transferCount : 0
-            }))
-            .sort((a, b) => b.avgImpact - a.avgImpact);
-          
-          // Sort by bench points wasted
-          const benchArray = [...impactArray]
-            .sort((a, b) => b.totalBenchPoints - a.totalBenchPoints);
-          
-          setTransferAnalysis({
-            byTotal: impactArray,
-            byAverage: avgArray,
-            byBenchPoints: benchArray,
-            totalTransfers: acceptedWaivers.length
-          });
-          
-          setBenchData(teamHistories);
-          
-          const currentGW = leagueData?.current_event || 1;
-          localStorage.setItem('transfer-analysis-cache', JSON.stringify({
-            gameweek: currentGW,
-            timestamp: Date.now(),
-            analysis: {
-              byTotal: impactArray,
-              byAverage: avgArray,
-              byBenchPoints: benchArray,
-              totalTransfers: acceptedWaivers.length
-            }
+          // Cache predictions
+          localStorage.setItem('ai-predictions-cache', JSON.stringify({
+            predictions: predictions,
+            timestamp: Date.now()
           }));
           
-        } catch (e) {
-          console.error('Analysis error:', e);
+          setAiPredictions(predictions);
+          alert('AI Predictions generated successfully!');
+          
+        } catch (error) {
+          console.error('AI generation error:', error);
+          alert(`Failed to generate predictions: ${error.message}`);
         } finally {
-          setAnalysisLoading(false);
-          setAnalysisProgress('');
+          setIsGeneratingPredictions(false);
         }
       };
 
-      const validateModel = async () => {
-        setRunningValidation(true);
-        
-        try {
-          const apiBase = '/.netlify/functions/fpl-proxy?endpoint=';
-          
-          console.log('🧪 Running comprehensive model validation...');
-          
-          // Fetch data
-          const bootstrapResponse = await fetch(`${apiBase}/api/bootstrap-static`);
-          const bootstrapData = await bootstrapResponse.json();
-          
-          const fixturesResponse = await fetch(`${apiBase}/api/fixtures`);
-          const fixturesData = await fixturesResponse.json();
-          
-          const teams = {};
-          bootstrapData.teams.forEach(team => teams[team.id] = team);
-          
-          const positions = {1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD'};
-          
-          // Get ALL completed gameweeks
-          const currentGW = bootstrapData.events.find(e => e.is_current)?.id || 
-                           Math.max(...bootstrapData.events.filter(e => e.finished).map(e => e.id));
-          
-          const completedGWs = bootstrapData.events
-            .filter(e => e.finished)
-            .map(e => e.id);
-          
-          console.log(`📊 Testing against ALL ${completedGWs.length} completed gameweeks...`);
-          
-          // Build fixtures map for ALL completed games
-          const allFixtures = {};
-          fixturesData.forEach(fixture => {
-            if (completedGWs.includes(fixture.event) && fixture.finished) {
-              if (!allFixtures[fixture.team_h]) allFixtures[fixture.team_h] = [];
-              if (!allFixtures[fixture.team_a]) allFixtures[fixture.team_a] = [];
-              
-              allFixtures[fixture.team_h].push({
-                gw: fixture.event,
-                opponent: fixture.team_a,
-                isHome: true,
-                oppDefStrength: teams[fixture.team_a].strength_defence_away,
-                oppAttStrength: teams[fixture.team_a].strength_attack_away,
-                teamAttStrength: teams[fixture.team_h].strength_attack_home,
-                teamDefStrength: teams[fixture.team_h].strength_defence_home,
-                finished: true
-              });
-              
-              allFixtures[fixture.team_a].push({
-                gw: fixture.event,
-                opponent: fixture.team_h,
-                isHome: false,
-                oppDefStrength: teams[fixture.team_h].strength_defence_home,
-                oppAttStrength: teams[fixture.team_h].strength_attack_home,
-                teamAttStrength: teams[fixture.team_a].strength_attack_away,
-                teamDefStrength: teams[fixture.team_a].strength_defence_away,
-                finished: true
-              });
-            }
-          });
-          
-          console.log('🔍 Testing multiple parameter configurations...');
-          
-          // Test different parameter sets to find optimal weights
-          const parameterTests = [
-            // Current model
-            { name: 'Current', goalWeight: 1.0, assistWeight: 1.0, homeBonus: 1.1, formWeight: 1.0 },
-            // More conservative
-            { name: 'Conservative', goalWeight: 0.8, assistWeight: 0.8, homeBonus: 1.05, formWeight: 0.8 },
-            // More aggressive
-            { name: 'Aggressive', goalWeight: 1.2, assistWeight: 1.2, homeBonus: 1.15, formWeight: 1.2 },
-            // Form-focused
-            { name: 'Form-Focused', goalWeight: 1.0, assistWeight: 1.0, homeBonus: 1.1, formWeight: 1.5 },
-            // Home-advantage focused
-            { name: 'Home-Heavy', goalWeight: 1.0, assistWeight: 1.0, homeBonus: 1.2, formWeight: 1.0 }
-          ];
-          
-          const parameterResults = [];
-          
-          for (const params of parameterTests) {
-            console.log(`Testing ${params.name} parameters...`);
-            
-            const validationData = [];
-            const testPlayers = bootstrapData.elements
-              .filter(p => p.status === 'a' && p.minutes >= 450 && p.starts >= 5)
-              .slice(0, 150); // Test more players with full season data
-            
-            for (const player of testPlayers) {
-              try {
-                const teamId = player.team;
-                const position = positions[player.element_type];
-                const fixtures = (allFixtures[teamId] || []).filter(f => f.finished);
-                
-                if (fixtures.length < 5) continue;
-                
-                // Calculate baseline stats (per 90)
-                const totalMinutes = player.minutes;
-                const gamesPlayed = totalMinutes / 90;
-                
-                const goalsScored = player.goals_scored || 0;
-                const assists = player.assists || 0;
-                const cleanSheets = player.clean_sheets || 0;
-                const bonusPoints = player.bonus || 0;
-                const starts = player.starts || 0;
-                
-                const goalsPer90 = gamesPlayed > 0 ? (goalsScored / gamesPlayed) : 0;
-                const assistsPer90 = gamesPlayed > 0 ? (assists / gamesPlayed) : 0;
-                const cleanSheetRate = gamesPlayed > 0 ? (cleanSheets / gamesPlayed) : 0;
-                const bonusRate = gamesPlayed > 0 ? (bonusPoints / gamesPlayed) : 0;
-                const startRate = gamesPlayed > 0 ? (starts / gamesPlayed) : 0;
-                
-                const form = parseFloat(player.form || 0);
-                
-                // Actual season totals
-                const actualPoints = player.total_points;
-                const actualGoals = goalsScored;
-                const actualAssists = assists;
-                const actualCleanSheets = cleanSheets;
-                
-                // Run prediction with current parameter set
-                let predictedPoints = 0;
-                let predictedGoals = 0;
-                let predictedAssists = 0;
-                
-                fixtures.forEach(fixture => {
-                  const attackingDifficulty = fixture.oppDefStrength / 1000;
-                  const attackingStrength = fixture.teamAttStrength / 1000;
-                  const attackMultiplier = (attackingStrength / attackingDifficulty) * params.goalWeight;
-                  
-                  const defensiveDifficulty = fixture.oppAttStrength / 1000;
-                  const defensiveStrength = fixture.teamDefStrength / 1000;
-                  const defenseMultiplier = defensiveStrength / defensiveDifficulty;
-                  
-                  const homeBonus = fixture.isHome ? params.homeBonus : 0.95;
-                  const formMultiplier = (form / 5) * params.formWeight;
-                  
-                  const positionGoalWeight = {'FWD': 1.0, 'MID': 0.85, 'DEF': 0.3, 'GK': 0.05}[position] || 0.5;
-                  const goalProb = Math.min(0.95, goalsPer90 * attackMultiplier * homeBonus * positionGoalWeight);
-                  
-                  const positionAssistWeight = {'FWD': 0.7, 'MID': 1.0, 'DEF': 0.4, 'GK': 0.05}[position] || 0.5;
-                  const assistProb = Math.min(0.85, assistsPer90 * attackMultiplier * homeBonus * positionAssistWeight * params.assistWeight);
-                  
-                  const positionCSWeight = {'GK': 1.0, 'DEF': 1.0, 'MID': 0.0, 'FWD': 0.0}[position] || 0;
-                  const cleanSheetProb = Math.min(0.75, cleanSheetRate * defenseMultiplier * homeBonus * positionCSWeight);
-                  
-                  const bonusProb = Math.min(0.6, bonusRate * formMultiplier * homeBonus);
-                  
-                  predictedGoals += goalProb;
-                  predictedAssists += assistProb;
-                  
-                  let fixturePoints = 2;
-                  const goalPoints = {'FWD': 4, 'MID': 5, 'DEF': 6, 'GK': 6}[position] || 4;
-                  fixturePoints += goalProb * goalPoints;
-                  if (goalProb > 0.3) fixturePoints += (goalProb * 0.4) * goalPoints;
-                  fixturePoints += assistProb * 3;
-                  const csPoints = {'GK': 4, 'DEF': 4, 'MID': 1, 'FWD': 0}[position] || 0;
-                  fixturePoints += cleanSheetProb * csPoints;
-                  fixturePoints += bonusProb * 2;
-                  fixturePoints *= startRate;
-                  if (position === 'DEF' || position === 'GK') {
-                    fixturePoints += 0.5 * defenseMultiplier;
-                  }
-                  
-                  predictedPoints += fixturePoints;
-                });
-                
-                const pointsError = Math.abs(predictedPoints - actualPoints);
-                const goalsError = Math.abs(predictedGoals - actualGoals);
-                const assistsError = Math.abs(predictedAssists - actualAssists);
-                
-                validationData.push({
-                  name: player.web_name,
-                  team: teams[teamId].short_name,
-                  position: position,
-                  predicted: { points: predictedPoints, goals: predictedGoals, assists: predictedAssists },
-                  actual: { points: actualPoints, goals: actualGoals, assists: actualAssists },
-                  errors: { points: pointsError, goals: goalsError, assists: assistsError },
-                  percentError: actualPoints > 0 ? (pointsError / actualPoints * 100) : 0
-                });
-                
-              } catch (e) {
-                console.log('Error:', e);
-              }
-            }
-            
-            if (validationData.length > 0) {
-              const avgError = validationData.reduce((sum, p) => sum + p.errors.points, 0) / validationData.length;
-              const rmse = Math.sqrt(validationData.reduce((sum, p) => sum + Math.pow(p.errors.points, 2), 0) / validationData.length);
-              const avgGoalsError = validationData.reduce((sum, p) => sum + p.errors.goals, 0) / validationData.length;
-              const avgAssistsError = validationData.reduce((sum, p) => sum + p.errors.assists, 0) / validationData.length;
-              
-              parameterResults.push({
-                ...params,
-                avgError,
-                rmse,
-                avgGoalsError,
-                avgAssistsError,
-                validationData
-              });
-            }
-            
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
-          
-          // Find best parameter set
-          parameterResults.sort((a, b) => a.avgError - b.avgError);
-          const bestParams = parameterResults[0];
-          
-          console.log(`✅ Best configuration: ${bestParams.name} (±${bestParams.avgError.toFixed(2)} pts error)`);
-          
-          const biggestMisses = [...bestParams.validationData]
-            .sort((a, b) => b.errors.points - a.errors.points)
-            .slice(0, 20);
-          
-          const bestPredictions = [...bestParams.validationData]
-            .sort((a, b) => a.errors.points - b.errors.points)
-            .slice(0, 20);
-          
-          // By position breakdown
-          const byPosition = {};
-          ['FWD', 'MID', 'DEF', 'GK'].forEach(pos => {
-            const posPlayers = bestParams.validationData.filter(p => p.position === pos);
-            if (posPlayers.length > 0) {
-              byPosition[pos] = {
-                count: posPlayers.length,
-                avgError: posPlayers.reduce((sum, p) => sum + p.errors.points, 0) / posPlayers.length,
-                avgGoalsError: posPlayers.reduce((sum, p) => sum + p.errors.goals, 0) / posPlayers.length,
-                avgAssistsError: posPlayers.reduce((sum, p) => sum + p.errors.assists, 0) / posPlayers.length
-              };
-            }
-          });
-          
-          setValidationResults({
-            testPeriod: `GW1-${currentGW-1} (${completedGWs.length} gameweeks)`,
-            playersValidated: bestParams.validationData.length,
-            optimalParameters: {
-              name: bestParams.name,
-              goalWeight: bestParams.goalWeight,
-              assistWeight: bestParams.assistWeight,
-              homeBonus: bestParams.homeBonus,
-              formWeight: bestParams.formWeight
-            },
-            allParameterTests: parameterResults.map(p => ({
-              name: p.name,
-              avgError: p.avgError,
-              rmse: p.rmse
-            })),
-            metrics: {
-              avgPointsError: bestParams.avgError,
-              avgGoalsError: bestParams.avgGoalsError,
-              avgAssistsError: bestParams.avgAssistsError,
-              rmse: bestParams.rmse
-            },
-            byPosition: byPosition,
-            biggestMisses: biggestMisses,
-            bestPredictions: bestPredictions,
-            allResults: bestParams.validationData
-          });
-          
-        } catch (error) {
-          console.error('Validation error:', error);
-          alert('Validation failed: ' + error.message);
-        } finally {
-          setRunningValidation(false);
+      const handleAdminAction = () => {
+        if (!config.adminPassword) {
+          alert('Please set an Admin Password in Settings first');
+          setShowConfig(true);
+          return;
+        }
+        setShowAdminPrompt(true);
+      };
+
+      const verifyAdminAndGenerate = () => {
+        if (adminPasswordInput === config.adminPassword) {
+          setShowAdminPrompt(false);
+          setAdminPasswordInput('');
+          generateAIPredictions();
+        } else {
+          alert('Incorrect admin password');
         }
       };
 
@@ -1372,36 +841,6 @@
                 
                 <div className="flex items-center gap-3">
                   <button
-                    onClick={validateModel}
-                    disabled={runningValidation}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-                      runningValidation
-                        ? 'bg-orange-500/20 text-orange-400 cursor-not-allowed'
-                        : 'bg-orange-500/30 text-orange-300 hover:bg-orange-500/40 border border-orange-500/50'
-                    }`}
-                  >
-                    <span className="text-xl">{runningValidation ? '⏳' : '🧪'}</span>
-                    <span className="hidden sm:inline">
-                      {runningValidation ? 'Validating...' : 'Validate Model'}
-                    </span>
-                  </button>
-                  
-                  <button
-                    onClick={analyzeAllPlayers}
-                    disabled={analyzingPlayers}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-                      analyzingPlayers
-                        ? 'bg-purple-500/20 text-purple-400 cursor-not-allowed'
-                        : 'bg-purple-500/30 text-purple-300 hover:bg-purple-500/40 border border-purple-500/50'
-                    }`}
-                  >
-                    <span className="text-xl">{analyzingPlayers ? '⏳' : '🔮'}</span>
-                    <span className="hidden sm:inline">
-                      {analyzingPlayers ? 'Analyzing...' : 'Player Analysis'}
-                    </span>
-                  </button>
-                  
-                  <button
                     onClick={fetchLeagueData}
                     disabled={loading}
                     className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
@@ -1432,409 +871,6 @@
             {error && (
               <div className="glass-card rounded-xl p-4 border-l-4 border-red-500">
                 <p className="text-red-400 font-medium">Error: {error}</p>
-              </div>
-            )}
-
-            {/* Validation Results */}
-            {validationResults && (
-              <div className="glass-card rounded-2xl p-8 fade-in border-2 border-orange-500/30">
-                <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center gap-3">
-                    <span className="text-4xl">🧪</span>
-                    <div>
-                      <h2 className="text-2xl font-bold text-white">
-                        Self-Tuning Model Validation
-                      </h2>
-                      <p className="text-sm text-white/50">
-                        Tested on {validationResults.testPeriod} • {validationResults.playersValidated} players
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setValidationResults(null)}
-                    className="px-4 py-2 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all text-sm"
-                  >
-                    Close
-                  </button>
-                </div>
-
-                {/* Optimal Parameters Found */}
-                <div className="bg-gradient-to-r from-green-500/20 to-blue-500/20 border-2 border-green-500/30 rounded-xl p-6 mb-8">
-                  <h3 className="text-green-400 font-bold text-lg mb-4 flex items-center gap-2">
-                    <span className="text-2xl">✅</span>
-                    Optimal Configuration: {validationResults.optimalParameters.name}
-                  </h3>
-                  <div className="grid md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <div className="text-white/60">Goal Weight</div>
-                      <div className="text-white font-bold text-xl">{validationResults.optimalParameters.goalWeight}x</div>
-                    </div>
-                    <div>
-                      <div className="text-white/60">Assist Weight</div>
-                      <div className="text-white font-bold text-xl">{validationResults.optimalParameters.assistWeight}x</div>
-                    </div>
-                    <div>
-                      <div className="text-white/60">Home Bonus</div>
-                      <div className="text-white font-bold text-xl">{((validationResults.optimalParameters.homeBonus - 1) * 100).toFixed(0)}%</div>
-                    </div>
-                    <div>
-                      <div className="text-white/60">Form Weight</div>
-                      <div className="text-white font-bold text-xl">{validationResults.optimalParameters.formWeight}x</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Parameter Comparison */}
-                <div className="mb-8">
-                  <h3 className="text-white font-bold mb-4">Configuration Testing Results</h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-white/10">
-                          <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Configuration</th>
-                          <th className="text-right py-3 px-4 text-white/60 font-medium text-sm">Avg Error</th>
-                          <th className="text-right py-3 px-4 text-white/60 font-medium text-sm">RMSE</th>
-                          <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Rating</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {validationResults.allParameterTests?.map((test, idx) => (
-                          <tr key={idx} className={`border-b border-white/5 ${idx === 0 ? 'bg-green-500/10' : ''}`}>
-                            <td className="py-3 px-4">
-                              <span className="text-white font-medium">{test.name}</span>
-                              {idx === 0 && <span className="ml-2 text-green-400 text-xs">✨ BEST</span>}
-                            </td>
-                            <td className="py-3 px-4 text-right">
-                              <span className={`font-semibold ${
-                                test.avgError < 3 ? 'text-green-400' : 
-                                test.avgError < 5 ? 'text-yellow-400' : 'text-red-400'
-                              }`}>
-                                ±{test.avgError.toFixed(2)}
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 text-right text-white/80">{test.rmse.toFixed(2)}</td>
-                            <td className="py-3 px-4">
-                              <span className={`text-xs ${
-                                test.avgError < 3 ? 'text-green-400' : 
-                                test.avgError < 5 ? 'text-yellow-400' : 'text-red-400'
-                              }`}>
-                                {test.avgError < 3 ? '⭐⭐⭐ Excellent' : 
-                                 test.avgError < 5 ? '⭐⭐ Good' : '⭐ Needs Work'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Accuracy Metrics */}
-                <div className="grid md:grid-cols-4 gap-4 mb-8">
-                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-6 text-center">
-                    <div className="text-blue-400 text-sm font-semibold mb-2">Avg Points Error</div>
-                    <div className={`text-3xl font-bold ${
-                      validationResults.metrics.avgPointsError < 3 ? 'text-green-400' :
-                      validationResults.metrics.avgPointsError < 5 ? 'text-yellow-400' : 'text-red-400'
-                    }`}>
-                      ±{validationResults.metrics.avgPointsError.toFixed(2)}
-                    </div>
-                    <div className="text-white/40 text-xs mt-1">pts per player</div>
-                  </div>
-
-                  <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-6 text-center">
-                    <div className="text-purple-400 text-sm font-semibold mb-2">RMSE</div>
-                    <div className="text-white text-3xl font-bold">
-                      {validationResults.metrics.rmse.toFixed(2)}
-                    </div>
-                    <div className="text-white/40 text-xs mt-1">root mean square</div>
-                  </div>
-
-                  <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 text-center">
-                    <div className="text-red-400 text-sm font-semibold mb-2">Goals Error</div>
-                    <div className="text-white text-3xl font-bold">
-                      ±{validationResults.metrics.avgGoalsError.toFixed(2)}
-                    </div>
-                    <div className="text-white/40 text-xs mt-1">goals per player</div>
-                  </div>
-
-                  <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-6 text-center">
-                    <div className="text-green-400 text-sm font-semibold mb-2">Assists Error</div>
-                    <div className="text-white text-3xl font-bold">
-                      ±{validationResults.metrics.avgAssistsError.toFixed(2)}
-                    </div>
-                    <div className="text-white/40 text-xs mt-1">assists per player</div>
-                  </div>
-                </div>
-
-                {/* By Position Breakdown */}
-                {validationResults.byPosition && (
-                  <div className="mb-8">
-                    <h3 className="text-white font-bold mb-4">Accuracy by Position</h3>
-                    <div className="grid md:grid-cols-4 gap-4">
-                      {Object.entries(validationResults.byPosition).map(([pos, stats]) => (
-                        <div key={pos} className="bg-white/5 rounded-lg p-4 border border-white/10">
-                          <div className="text-white font-semibold mb-2 flex items-center gap-2">
-                            {pos === 'FWD' && '⚽'}
-                            {pos === 'MID' && '🎯'}
-                            {pos === 'DEF' && '🛡️'}
-                            {pos === 'GK' && '🧤'}
-                            {pos}
-                          </div>
-                          <div className="text-xs space-y-1">
-                            <div className="flex justify-between">
-                              <span className="text-white/60">Tested:</span>
-                              <span className="text-white">{stats.count} players</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-white/60">Avg Error:</span>
-                              <span className={`font-semibold ${
-                                stats.avgError < 3 ? 'text-green-400' : 
-                                stats.avgError < 5 ? 'text-yellow-400' : 'text-red-400'
-                              }`}>
-                                ±{stats.avgError.toFixed(1)}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Interpretation */}
-                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-6 mb-8">
-                  <h3 className="text-yellow-400 font-semibold mb-3 flex items-center gap-2">
-                    <span className="text-xl">📊</span>
-                    Interpretation
-                  </h3>
-                  <div className="grid md:grid-cols-2 gap-4 text-sm text-white/80">
-                    <div>
-                      <strong className="text-white">Model Accuracy: {validationResults.metrics.avgPointsError.toFixed(1)} pts error</strong>
-                      <p className="text-white/60 mt-1">
-                        {validationResults.metrics.avgPointsError < 3 
-                          ? '✅ Excellent! Model is highly accurate across the entire season.'
-                          : validationResults.metrics.avgPointsError < 5
-                          ? '⚠️ Good performance. Predictions are reliable for waiver decisions.'
-                          : '❌ Model needs improvement. Use predictions cautiously.'}
-                      </p>
-                    </div>
-                    <div>
-                      <strong className="text-white">Optimal Configuration Applied</strong>
-                      <p className="text-white/60 mt-1">
-                        System tested 5 different parameter sets and automatically selected the best performing configuration. 
-                        These optimized parameters will be used for future predictions.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Biggest Misses & Best Predictions */}
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div>
-                    <h3 className="text-lg font-bold text-red-400 mb-4">❌ Biggest Misses</h3>
-                    <div className="space-y-2">
-                      {validationResults.biggestMisses?.slice(0, 10).map((player, idx) => (
-                        <div key={idx} className="bg-red-500/5 border border-red-500/10 rounded-lg p-3">
-                          <div className="flex justify-between items-start mb-1">
-                            <div>
-                              <div className="text-white font-medium text-sm">{player.name}</div>
-                              <div className="text-white/50 text-xs">{player.team} • {player.position}</div>
-                            </div>
-                            <div className="text-red-400 font-bold text-lg">
-                              ±{player.errors.points.toFixed(1)}
-                            </div>
-                          </div>
-                          <div className="flex gap-4 text-xs">
-                            <span className="text-white/60">
-                              Predicted: {player.predicted.points.toFixed(1)}pts
-                            </span>
-                            <span className="text-white/60">
-                              Actual: {player.actual.points}pts
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-lg font-bold text-green-400 mb-4">✅ Best Predictions</h3>
-                    <div className="space-y-2">
-                      {validationResults.bestPredictions?.slice(0, 10).map((player, idx) => (
-                        <div key={idx} className="bg-green-500/5 border border-green-500/10 rounded-lg p-3">
-                          <div className="flex justify-between items-start mb-1">
-                            <div>
-                              <div className="text-white font-medium text-sm">{player.name}</div>
-                              <div className="text-white/50 text-xs">{player.team} • {player.position}</div>
-                            </div>
-                            <div className="text-green-400 font-bold text-lg">
-                              ±{player.errors.points.toFixed(1)}
-                            </div>
-                          </div>
-                          <div className="flex gap-4 text-xs">
-                            <span className="text-white/60">
-                              Predicted: {player.predicted.points.toFixed(1)}pts
-                            </span>
-                            <span className="text-white/60">
-                              Actual: {player.actual.points}pts
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Player Analysis Results */}
-            {playerAnalysis && (
-              <div className="glass-card rounded-2xl p-8 fade-in border-2 border-purple-500/30">
-                <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center gap-3">
-                    <span className="text-4xl">🔮</span>
-                    <div>
-                      <h2 className="text-2xl font-bold text-white">
-                        Next 5 Gameweeks Predictions
-                      </h2>
-                      <p className="text-sm text-white/50">
-                        GWs {playerAnalysis.next5GWs.join(', ')} • Based on form, fixtures & performance
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setPlayerAnalysis(null)}
-                    className="px-4 py-2 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all text-sm"
-                  >
-                    Close
-                  </button>
-                </div>
-
-                {/* Top 50 Overall */}
-                <div className="mb-8">
-                  <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-                    <span className="text-2xl">🏆</span>
-                    Top 50 Players
-                  </h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-white/10">
-                          <th className="text-left py-3 px-2 text-white/60 font-medium text-sm">Rank</th>
-                          <th className="text-left py-3 px-3 text-white/60 font-medium text-sm">Player</th>
-                          <th className="text-left py-3 px-2 text-white/60 font-medium text-sm">Team</th>
-                          <th className="text-left py-3 px-2 text-white/60 font-medium text-sm">Pos</th>
-                          <th className="text-right py-3 px-2 text-white/60 font-medium text-sm">Form</th>
-                          <th className="text-right py-3 px-2 text-white/60 font-medium text-sm">PPG</th>
-                          <th className="text-right py-3 px-2 text-white/60 font-medium text-sm">Own%</th>
-                          <th className="text-left py-3 px-3 text-white/60 font-medium text-sm">Next 5 Fixtures</th>
-                          <th className="text-right py-3 px-3 text-white/60 font-medium text-sm">Exp Pts</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {playerAnalysis.top50.map((player, idx) => (
-                          <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                            <td className="py-3 px-2">
-                              <span className={`font-bold ${
-                                idx < 3 ? 'text-yellow-400' : idx < 10 ? 'text-purple-400' : 'text-white/60'
-                              }`}>
-                                #{idx + 1}
-                              </span>
-                            </td>
-                            <td className="py-3 px-3">
-                              <div>
-                                <div className="text-white font-medium">{player.name}</div>
-                                <div className="text-white/40 text-xs">{player.fullName}</div>
-                              </div>
-                            </td>
-                            <td className="py-3 px-2 text-white/80 text-sm">{player.team}</td>
-                            <td className="py-3 px-2 text-white/80 text-sm font-semibold">{player.position}</td>
-                            <td className="py-3 px-2 text-right text-purple-400 font-semibold">{player.form.toFixed(1)}</td>
-                            <td className="py-3 px-2 text-right text-white/80">{player.ppg.toFixed(2)}</td>
-                            <td className="py-3 px-2 text-right text-white/60 text-sm">{player.ownership.toFixed(0)}%</td>
-                            <td className="py-3 px-3">
-                              <div className="flex gap-1 flex-wrap">
-                                {player.fixtures.map((fix, i) => (
-                                  <span key={i} className="text-xs bg-white/10 px-2 py-1 rounded text-white/70">
-                                    {fix}
-                                  </span>
-                                ))}
-                              </div>
-                            </td>
-                            <td className="py-3 px-3 text-right">
-                              <span className="text-green-400 font-bold text-lg">
-                                {player.expectedPoints.toFixed(1)}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* By Position */}
-                <div className="grid md:grid-cols-2 gap-6 mb-8">
-                  {Object.entries(playerAnalysis.byPosition).map(([position, players]) => (
-                    <div key={position} className="bg-white/5 rounded-xl p-6 border border-white/10">
-                      <h4 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                        {position === 'FWD' && '⚽'}
-                        {position === 'MID' && '🎯'}
-                        {position === 'DEF' && '🛡️'}
-                        {position === 'GK' && '🧤'}
-                        {' '}{position}
-                      </h4>
-                      <div className="space-y-2">
-                        {players.map((player, idx) => (
-                          <div key={idx} className="flex items-center justify-between py-2 border-b border-white/5">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="text-white/40 text-sm font-bold">#{idx + 1}</span>
-                                <span className="text-white font-medium text-sm">{player.name}</span>
-                                <span className="text-white/40 text-xs">{player.team}</span>
-                              </div>
-                              <div className="text-xs text-white/40 mt-1">
-                                {player.fixtures.join(' ')}
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <div className="text-green-400 font-bold">{player.expectedPoints.toFixed(1)}</div>
-                              <div className="text-white/40 text-xs">Form: {player.form.toFixed(1)}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Hidden Gems */}
-                <div className="bg-gradient-to-br from-purple-500/10 to-blue-500/10 border border-purple-500/20 rounded-xl p-6">
-                  <h3 className="text-xl font-bold text-purple-300 mb-4 flex items-center gap-2">
-                    <span className="text-2xl">💎</span>
-                    Hidden Gems (Ownership &lt; 30%)
-                  </h3>
-                  <div className="grid md:grid-cols-2 gap-4">
-                    {playerAnalysis.hiddenGems.slice(0, 10).map((player, idx) => (
-                      <div key={idx} className="bg-white/5 rounded-lg p-4">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <div className="text-white font-semibold">{player.name}</div>
-                            <div className="text-white/60 text-sm">{player.team} • {player.position}</div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-green-400 font-bold text-lg">{player.expectedPoints.toFixed(1)}</div>
-                            <div className="text-white/40 text-xs">{player.ownership.toFixed(0)}% owned</div>
-                          </div>
-                        </div>
-                        <div className="text-xs text-white/50">
-                          {player.fixtures.join(' • ')}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </div>
             )}
 
@@ -1936,183 +972,135 @@
               </div>
             )}
 
-            {/* Transfer Hall of Shame & Fame */}
-            {transferAnalysis && (
-              <>
-                {/* Bench Points Waste */}
-                <div className="glass-card rounded-2xl p-8 fade-in border-2 border-red-500/30">
-                  <div className="flex items-center gap-3 mb-6">
-                    <span className="text-4xl">🪑</span>
+            {/* AI Season Predictions */}
+            {aiPredictions && (
+              <div className="glass-card rounded-2xl p-8 fade-in border-2 border-yellow-400/30">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl">🤖</span>
                     <div>
                       <h2 className="text-2xl font-bold text-white">
-                        Bench Points Wasted
+                        AI Season Predictions
                       </h2>
                       <p className="text-sm text-white/50">
-                        Points left on the bench all season 💔
+                        Generated {new Date(aiPredictions.generated_at).toLocaleDateString()}
                       </p>
                     </div>
                   </div>
+                  {config.adminPassword && (
+                    <button
+                      onClick={handleAdminAction}
+                      disabled={isGeneratingPredictions}
+                      className="px-4 py-2 bg-yellow-400/20 border border-yellow-400/50 text-yellow-400 rounded-lg font-medium hover:bg-yellow-400/30 transition-all text-sm disabled:opacity-50"
+                    >
+                      {isGeneratingPredictions ? 'Generating...' : '🔄 Regenerate'}
+                    </button>
+                  )}
+                </div>
 
-                  <div className="grid md:grid-cols-2 gap-6 mb-6">
-                    {/* Hall of Shame - Most bench points */}
-                    <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6">
-                      <h3 className="text-lg font-semibold text-red-400 mb-4 flex items-center gap-2">
-                        <span className="text-2xl">😭</span>
-                        Hall of Shame
-                      </h3>
-                      <div className="space-y-3">
-                        {transferAnalysis.byBenchPoints?.slice(0, 5).map((team, idx) => (
-                          <div key={idx} className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <span className="text-red-400 font-bold text-lg">#{idx + 1}</span>
-                              <span className="text-white font-medium">{team.player_name}</span>
-                            </div>
-                            <div className="text-right">
-                              <div className="text-red-400 font-bold text-xl">{team.totalBenchPoints}</div>
-                              <div className="text-red-400/60 text-xs">{team.avgBenchPoints} avg/GW</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Smart Starters */}
-                    <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-6">
-                      <h3 className="text-lg font-semibold text-green-400 mb-4 flex items-center gap-2">
-                        <span className="text-2xl">🧠</span>
-                        Smart Starters
-                      </h3>
-                      <div className="space-y-3">
-                        {transferAnalysis.byBenchPoints?.slice().reverse().slice(0, 5).map((team, idx) => (
-                          <div key={idx} className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <span className="text-green-400 font-bold text-lg">#{idx + 1}</span>
-                              <span className="text-white font-medium">{team.player_name}</span>
-                            </div>
-                            <div className="text-right">
-                              <div className="text-green-400 font-bold text-xl">{team.totalBenchPoints}</div>
-                              <div className="text-green-400/60 text-xs">{team.avgBenchPoints} avg/GW</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                {/* Key Insights */}
+                {aiPredictions.key_insights && (
+                  <div className="mb-8 p-4 bg-yellow-400/10 border border-yellow-400/20 rounded-xl">
+                    <h3 className="text-sm font-semibold text-yellow-400 mb-3">Key Insights</h3>
+                    <ul className="space-y-2">
+                      {aiPredictions.key_insights.map((insight, idx) => (
+                        <li key={idx} className="text-sm text-white/80 flex items-start gap-2">
+                          <span className="text-yellow-400">•</span>
+                          <span>{insight}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
+                )}
 
-                  {/* Full bench breakdown */}
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-white/10">
-                          <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Rank</th>
-                          <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Manager</th>
-                          <th className="text-right py-3 px-4 text-white/60 font-medium text-sm">Total Bench Pts</th>
-                          <th className="text-right py-3 px-4 text-white/60 font-medium text-sm">Avg per GW</th>
-                          <th className="text-right py-3 px-4 text-white/60 font-medium text-sm">Efficiency</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {transferAnalysis.byBenchPoints?.map((team, idx) => {
-                          const currentTeam = standings.find(s => s.entry_id === team.entry_id);
-                          const efficiency = currentTeam ? (100 - (team.totalBenchPoints / currentTeam.points_for * 100)).toFixed(1) : 0;
-                          
+                {/* Predictions Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-white/10">
+                        <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Current</th>
+                        <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Manager</th>
+                        <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Predicted Finish</th>
+                        <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Movement</th>
+                        <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Confidence</th>
+                        <th className="text-left py-3 px-4 text-white/60 font-medium text-sm">Reasoning</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {aiPredictions.predictions
+                        .sort((a, b) => a.predicted_rank - b.predicted_rank)
+                        .map((pred, idx) => {
+                          const movement = pred.current_rank - pred.predicted_rank;
                           return (
                             <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                              <td className="py-3 px-4">
-                                <span className={`font-bold ${
-                                  idx < 3 ? 'text-red-400' : idx >= transferAnalysis.byBenchPoints.length - 3 ? 'text-green-400' : 'text-white/60'
+                              <td className="py-4 px-4">
+                                <span className="text-white/60 font-medium">#{pred.current_rank}</span>
+                              </td>
+                              <td className="py-4 px-4">
+                                <span className="text-white font-medium">{pred.manager}</span>
+                              </td>
+                              <td className="py-4 px-4">
+                                <span className={`text-lg font-bold ${
+                                  pred.predicted_rank === 1 ? 'text-yellow-400' : 
+                                  pred.predicted_rank >= 7 && pred.predicted_rank !== 9 ? 'text-red-400' : 
+                                  'text-white'
                                 }`}>
-                                  #{idx + 1}
+                                  #{pred.predicted_rank}
+                                  {pred.predicted_rank === 1 && ' 🏆'}
+                                  {(pred.predicted_rank >= 7 && pred.predicted_rank !== 9) && ' 🍟'}
                                 </span>
                               </td>
-                              <td className="py-3 px-4">
-                                <span className="text-white font-medium">{team.player_name}</span>
+                              <td className="py-4 px-4">
+                                {movement !== 0 && (
+                                  <span className={`flex items-center gap-1 font-semibold ${
+                                    movement > 0 ? 'text-green-400' : 'text-red-400'
+                                  }`}>
+                                    {movement > 0 ? '↑' : '↓'} {Math.abs(movement)}
+                                  </span>
+                                )}
+                                {movement === 0 && (
+                                  <span className="text-white/40">−</span>
+                                )}
                               </td>
-                              <td className="py-3 px-4 text-right">
-                                <span className="text-white font-bold text-lg">{team.totalBenchPoints}</span>
+                              <td className="py-4 px-4">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 max-w-[100px] h-2 bg-white/10 rounded-full overflow-hidden">
+                                    <div 
+                                      className="h-full bg-yellow-400 transition-all"
+                                      style={{ width: `${pred.confidence}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-sm text-white/60 min-w-[45px]">{pred.confidence}%</span>
+                                </div>
                               </td>
-                              <td className="py-3 px-4 text-right">
-                                <span className="text-white/80">{team.avgBenchPoints}</span>
-                              </td>
-                              <td className="py-3 px-4 text-right">
-                                <span className={`font-semibold ${
-                                  efficiency >= 95 ? 'text-green-400' : efficiency >= 90 ? 'text-yellow-400' : 'text-red-400'
-                                }`}>
-                                  {efficiency}%
-                                </span>
+                              <td className="py-4 px-4">
+                                <span className="text-sm text-white/70">{pred.reasoning}</span>
                               </td>
                             </tr>
                           );
                         })}
-                      </tbody>
-                    </table>
-                  </div>
+                    </tbody>
+                  </table>
                 </div>
+              </div>
+            )}
 
-                {/* Transfer Activity Stats */}
-                <div className="glass-card rounded-2xl p-8 fade-in">
-                  <div className="flex items-center gap-3 mb-6">
-                    <span className="text-4xl">📊</span>
-                    <div>
-                      <h2 className="text-2xl font-bold text-white">
-                        Transfer Activity
-                      </h2>
-                      <p className="text-sm text-white/50">
-                        {transferAnalysis.totalTransfers} total waiver transfers this season
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid md:grid-cols-3 gap-6 mb-8">
-                    {/* Most Active */}
-                    <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-6">
-                      <h3 className="text-blue-400 font-semibold mb-4 text-sm">Most Active</h3>
-                      <div className="space-y-2">
-                        {transferAnalysis.byTotal.slice(0, 3).map((team, idx) => (
-                          <div key={idx} className="flex items-center justify-between">
-                            <span className="text-white/80 text-sm">{team.player_name}</span>
-                            <span className="text-blue-400 font-bold">{team.transferCount}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Least Active */}
-                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-6">
-                      <h3 className="text-purple-400 font-semibold mb-4 text-sm">Set & Forget</h3>
-                      <div className="space-y-2">
-                        {transferAnalysis.byTotal.slice().reverse().slice(0, 3).map((team, idx) => (
-                          <div key={idx} className="flex items-center justify-between">
-                            <span className="text-white/80 text-sm">{team.player_name}</span>
-                            <span className="text-purple-400 font-bold">{team.transferCount}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Average */}
-                    <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-6">
-                      <h3 className="text-yellow-400 font-semibold mb-4 text-sm">League Stats</h3>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-white/60">Avg Transfers</span>
-                          <span className="text-yellow-400 font-bold">
-                            {(transferAnalysis.totalTransfers / transferAnalysis.byTotal.length).toFixed(1)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-white/60">Most in 1 GW</span>
-                          <span className="text-yellow-400 font-bold">-</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-white/60">Total Processed</span>
-                          <span className="text-yellow-400 font-bold">{transferAnalysis.totalTransfers}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </>
+            {/* Generate AI Predictions Button (if not yet generated) */}
+            {!aiPredictions && config.adminPassword && config.anthropicApiKey && (
+              <div className="glass-card rounded-2xl p-8 text-center fade-in border-2 border-yellow-400/20">
+                <span className="text-5xl mb-4 block">🤖</span>
+                <h3 className="text-xl font-bold text-white mb-2">AI Season Predictions</h3>
+                <p className="text-white/60 mb-6">
+                  Generate AI-powered predictions for final league positions
+                </p>
+                <button
+                  onClick={handleAdminAction}
+                  disabled={isGeneratingPredictions}
+                  className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-500 text-gray-900 font-semibold rounded-xl hover:from-yellow-300 hover:to-yellow-400 transition-all disabled:opacity-50"
+                >
+                  {isGeneratingPredictions ? 'Generating Predictions...' : 'Generate Predictions'}
+                </button>
+              </div>
             )}
 
             {/* Transfer Analysis */}
@@ -2318,6 +1306,43 @@
                       className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-yellow-400/50"
                     />
                   </div>
+                  
+                  <div className="pt-4 mt-4 border-t border-white/10">
+                    <h3 className="text-white font-semibold mb-3 text-sm">AI Predictions Settings</h3>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-white/80 text-sm font-medium mb-2">
+                          Admin Password
+                          <span className="text-white/40 text-xs ml-2">(Required to generate AI predictions)</span>
+                        </label>
+                        <input
+                          type="password"
+                          value={config.adminPassword}
+                          onChange={(e) => setConfig({...config, adminPassword: e.target.value})}
+                          placeholder="Set a secure password"
+                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-yellow-400/50"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-white/80 text-sm font-medium mb-2">
+                          Anthropic API Key
+                          <span className="text-white/40 text-xs ml-2">(Get from console.anthropic.com)</span>
+                        </label>
+                        <input
+                          type="password"
+                          value={config.anthropicApiKey}
+                          onChange={(e) => setConfig({...config, anthropicApiKey: e.target.value})}
+                          placeholder="sk-ant-..."
+                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-yellow-400/50 font-mono text-sm"
+                        />
+                        <p className="text-xs text-white/40 mt-2">
+                          Stored locally in your browser. Never sent to our servers.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 
                 <div className="flex gap-3 mt-6">
@@ -2333,6 +1358,53 @@
                   </button>
                   <button 
                     onClick={() => setShowConfig(false)}
+                    className="px-6 py-3 bg-white/10 text-white font-semibold rounded-xl hover:bg-white/20 transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Admin Password Prompt */}
+          {showAdminPrompt && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 z-50">
+              <div className="glass-card rounded-2xl p-8 max-w-md w-full shadow-2xl">
+                <h2 className="text-2xl font-bold text-white mb-4">Admin Access Required</h2>
+                <p className="text-white/60 mb-6">
+                  Enter admin password to regenerate AI predictions
+                </p>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-white/80 text-sm font-medium mb-2">
+                      Admin Password
+                    </label>
+                    <input
+                      type="password"
+                      value={adminPasswordInput}
+                      onChange={(e) => setAdminPasswordInput(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && verifyAdminAndGenerate()}
+                      className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:border-yellow-400/50"
+                      placeholder="Enter admin password"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                
+                <div className="flex gap-3 mt-6">
+                  <button
+                    onClick={verifyAdminAndGenerate}
+                    className="flex-1 py-3 bg-gradient-to-r from-yellow-400 to-yellow-500 text-gray-900 font-semibold rounded-xl hover:from-yellow-300 hover:to-yellow-400 transition-all"
+                  >
+                    Generate Predictions
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setShowAdminPrompt(false);
+                      setAdminPasswordInput('');
+                    }}
                     className="px-6 py-3 bg-white/10 text-white font-semibold rounded-xl hover:bg-white/20 transition-all"
                   >
                     Cancel
